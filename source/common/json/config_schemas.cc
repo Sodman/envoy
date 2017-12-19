@@ -930,6 +930,32 @@ const std::string Json::Schema::LUA_HTTP_FILTER_SCHEMA(R"EOF(
   }
   )EOF");
 
+const std::string Json::Schema::SQUASH_HTTP_FILTER_SCHEMA(R"EOF(
+  {
+    "$schema": "http://json-schema.org/schema#",
+    "type" : "object",
+    "properties" : {
+      "squash_cluster": {
+        "type" : "string"
+      },
+      "attachment_template": {
+        "type" : "string"
+      },
+      "attachment_timeout_ms": {
+        "type" : "number"
+      },
+      "attachment_poll_every_ms": {
+        "type" : "number"
+      },
+      "squash_request_timeout_ms": {
+        "type" : "number"
+      }
+    },
+    "required": ["squash_cluster"],
+    "additionalProperties" : false
+  }
+  )EOF");
+
 const std::string Json::Schema::FAULT_HTTP_FILTER_SCHEMA(R"EOF(
   {
     "$schema": "http://json-schema.org/schema#",
