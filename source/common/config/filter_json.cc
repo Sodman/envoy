@@ -313,6 +313,17 @@ void FilterJson::translateGrpcJsonTranscoder(
   }
 }
 
+void FilterJson::translateSquashConfig(const Json::Object& json_config,
+                              envoy::api::v2::filter::http::SquashConfig& proto_config) {
+  json_config.validateSchema(Json::Schema::SQUASH_HTTP_FILTER_SCHEMA);
+
+  JSON_UTIL_SET_STRING(json_config, proto_config, squash_cluster);
+  JSON_UTIL_SET_STRING(json_config, proto_config, attachment_template);
+  JSON_UTIL_SET_DURATION(json_config, proto_config, attachment_timeout);
+  JSON_UTIL_SET_DURATION(json_config, proto_config, attachment_poll_every);
+  JSON_UTIL_SET_DURATION(json_config, proto_config, squash_request_timeout);
+}
+
 void FilterJson::translateRouter(const Json::Object& json_config,
                                  envoy::api::v2::filter::http::Router& proto_config) {
   json_config.validateSchema(Json::Schema::ROUTER_HTTP_FILTER_SCHEMA);
