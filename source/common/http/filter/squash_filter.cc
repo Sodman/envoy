@@ -30,22 +30,25 @@ SquashFilterConfig::SquashFilterConfig(
 
 std::string SquashFilterConfig::getAttachment(const ProtobufWkt::Struct& attachment_template) {
   ProtobufWkt::Struct attachment_json(attachment_template);
-  for (auto& value_it : *attachment_json.mutable_fields()) {
+  getAttachmentFromStruct(attachment_json);
+  return MessageUtil::getJsonStringFromMessage(attachment_json);
+}
+
+void SquashFilterConfig::getAttachmentFromStruct(ProtobufWkt::Struct& attachment_template) {
+  for (auto& value_it : *attachment_template.mutable_fields()) {
     auto& curvalue = value_it.second;
     if (curvalue.kind_case() == ProtobufWkt::Value::kStructValue) {
-      getAttachment(curvalue.struct_value());
+      getAttachmentFromStruct(*curvalue.mutable_struct_value());
     } else {
       getAttachmentFromValue(curvalue);
     }
   }
-
-  return MessageUtil::getJsonStringFromMessage(attachment_json);
 }
 
 void SquashFilterConfig::getAttachmentFromValue(ProtobufWkt::Value& curvalue) {
   switch (curvalue.kind_case()) {
   case ProtobufWkt::Value::kStructValue: {
-    getAttachment(curvalue.struct_value());
+    getAttachmentFromStruct(*curvalue.mutable_struct_value());
     break;
   }
   case ProtobufWkt::Value::kListValue: {

@@ -2,12 +2,16 @@
 
 #include <cstdlib>
 
+#include "common/protobuf/protobuf.h"
+
 #include "test/integration/autonomous_upstream.h"
 #include "test/integration/http_integration.h"
 #include "test/integration/integration.h"
 #include "test/integration/utility.h"
 
 #define ENV_VAR_VALUE "somerandomevalue"
+
+using Envoy::Protobuf::util::MessageDifferencer;
 
 namespace Envoy {
 
@@ -29,7 +33,7 @@ public:
 
     ::setenv("SQUASH_ENV_TEST", ENV_VAR_VALUE, 1);
 
-    createTestServer("test/envoy-test.yaml", {"http"});
+    createTestServer("test/config/integration/squash_filter.yaml", {"http"});
 
     codec_client_ = makeHttpConnection(lookupPort("http"));
   }
@@ -105,9 +109,15 @@ TEST_P(SquashFilterIntegrationTest, TestHappyPath) {
 
   EXPECT_STREQ("POST", create_stream->headers().Method()->value().c_str());
   // make sure the env var was replaced
-  const char* expectedbody = "{\"spec\": { \"attachment\" : { \"env\": \"" ENV_VAR_VALUE "\" } } }";
-  EXPECT_EQ(0, create_stream->body().search(expectedbody, std::strlen(expectedbody), 0));
-  EXPECT_EQ(std::strlen(expectedbody), create_stream->body().length());
+  ProtobufWkt::Struct actualbody;
+  MessageUtil::loadFromJson(TestUtility::bufferToString(create_stream->body()), actualbody);
+
+  ProtobufWkt::Struct expectedbody;
+  MessageUtil::loadFromJson("{\"spec\": { \"attachment\" : { \"env\": \"" ENV_VAR_VALUE
+                            "\" } , \"match_request\":true} }",
+                            expectedbody);
+
+  EXPECT_TRUE(MessageDifferencer::Equals(expectedbody, actualbody));
 
   // The second request should be fore the created object
   EXPECT_STREQ("GET", get_stream->headers().Method()->value().c_str());

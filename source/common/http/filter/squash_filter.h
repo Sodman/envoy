@@ -28,6 +28,7 @@ public:
 
 private:
   static std::string getAttachment(const ProtobufWkt::Struct& attachment_template);
+  static void getAttachmentFromStruct(ProtobufWkt::Struct& attachment_template);
   static void getAttachmentFromValue(ProtobufWkt::Value& curvalue);
   static std::string replaceEnv(const std::string& attachment_template);
 

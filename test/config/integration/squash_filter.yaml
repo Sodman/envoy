@@ -32,7 +32,7 @@ static_resources:
               attachment_poll_period:
                 seconds: 1
                 nanos: 0
-              squash_request_timeout:
+              request_timeout:
                 seconds: 0
                 nanos: 100000000
           - name: envoy.router
