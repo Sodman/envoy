@@ -20,22 +20,22 @@ class SquashFilterConfig : protected Logger::Loggable<Logger::Id::config> {
 public:
   SquashFilterConfig(const envoy::api::v2::filter::http::SquashConfig& proto_config,
                      Upstream::ClusterManager& clusterManager);
-  const std::string& squash_cluster_name() { return squash_cluster_name_; }
+  const std::string& cluster_name() { return cluster_name_; }
   const std::string& attachment_json() { return attachment_json_; }
   const std::chrono::milliseconds& attachment_timeout() { return attachment_timeout_; }
-  const std::chrono::milliseconds& attachment_poll_every() { return attachment_poll_every_; }
-  const std::chrono::milliseconds& squash_request_timeout() { return squash_request_timeout_; }
+  const std::chrono::milliseconds& attachment_poll_period() { return attachment_poll_period_; }
+  const std::chrono::milliseconds& request_timeout() { return request_timeout_; }
 
 private:
-  const static std::string DEFAULT_ATTACHMENT_TEMPLATE;
+  static std::string getAttachment(const ProtobufWkt::Struct& attachment_template);
+  static void getAttachmentFromValue(ProtobufWkt::Value& curvalue);
+  static std::string replaceEnv(const std::string& attachment_template);
 
-  std::string getAttachment(const std::string& attachment_template);
-
-  std::string squash_cluster_name_;
+  std::string cluster_name_;
   std::string attachment_json_;
   std::chrono::milliseconds attachment_timeout_;
-  std::chrono::milliseconds attachment_poll_every_;
-  std::chrono::milliseconds squash_request_timeout_;
+  std::chrono::milliseconds attachment_poll_period_;
+  std::chrono::milliseconds request_timeout_;
 };
 
 typedef std::shared_ptr<SquashFilterConfig> SquashFilterConfigSharedPtr;

@@ -12,39 +12,63 @@
 namespace Envoy {
 namespace Http {
 
-namespace Protobuf = Protobuf;
-
-const std::string SquashFilterConfig::DEFAULT_ATTACHMENT_TEMPLATE(R"EOF(
-  {
-    "spec" : {
-      "attachment" : {
-        "pod": "{{ POD_NAME }}",
-        "namespace": "{{ POD_NAMESPACE }}"
-      },
-      "match_request":true
-    }
-  }
-  )EOF");
-
 SquashFilterConfig::SquashFilterConfig(
     const envoy::api::v2::filter::http::SquashConfig& proto_config,
     Upstream::ClusterManager& clusterManager)
-    : squash_cluster_name_(proto_config.squash_cluster()),
+    : cluster_name_(proto_config.cluster()),
       attachment_json_(getAttachment(proto_config.attachment_template())),
       attachment_timeout_(PROTOBUF_GET_MS_OR_DEFAULT(proto_config, attachment_timeout, 60000)),
-      attachment_poll_every_(PROTOBUF_GET_MS_OR_DEFAULT(proto_config, attachment_poll_every, 1000)),
-      squash_request_timeout_(
-          PROTOBUF_GET_MS_OR_DEFAULT(proto_config, squash_request_timeout, 1000)) {
-  if (attachment_json_.empty()) {
-    attachment_json_ = getAttachment(DEFAULT_ATTACHMENT_TEMPLATE);
-  }
-  if (!clusterManager.get(squash_cluster_name_)) {
+      attachment_poll_period_(
+          PROTOBUF_GET_MS_OR_DEFAULT(proto_config, attachment_poll_period, 1000)),
+      request_timeout_(PROTOBUF_GET_MS_OR_DEFAULT(proto_config, request_timeout, 1000)) {
+
+  if (!clusterManager.get(cluster_name_)) {
     throw EnvoyException(
-        fmt::format("squash filter: unknown cluster '{}' in squash config", squash_cluster_name_));
+        fmt::format("squash filter: unknown cluster '{}' in squash config", cluster_name_));
   }
 }
 
-std::string SquashFilterConfig::getAttachment(const std::string& attachment_template) {
+std::string SquashFilterConfig::getAttachment(const ProtobufWkt::Struct& attachment_template) {
+  ProtobufWkt::Struct attachment_json(attachment_template);
+  for (auto& value_it : *attachment_json.mutable_fields()) {
+    auto& curvalue = value_it.second;
+    if (curvalue.kind_case() == ProtobufWkt::Value::kStructValue) {
+      getAttachment(curvalue.struct_value());
+    } else {
+      getAttachmentFromValue(curvalue);
+    }
+  }
+
+  return MessageUtil::getJsonStringFromMessage(attachment_json);
+}
+
+void SquashFilterConfig::getAttachmentFromValue(ProtobufWkt::Value& curvalue) {
+  switch (curvalue.kind_case()) {
+  case ProtobufWkt::Value::kStructValue: {
+    getAttachment(curvalue.struct_value());
+    break;
+  }
+  case ProtobufWkt::Value::kListValue: {
+    ProtobufWkt::ListValue& values = *curvalue.mutable_list_value();
+    for (int i = 0; i < values.values_size(); i++) {
+      getAttachmentFromValue(*values.mutable_values(i));
+    }
+    break;
+  }
+  case ProtobufWkt::Value::kStringValue: {
+    curvalue.set_string_value(replaceEnv(curvalue.string_value()));
+    break;
+  }
+  case ProtobufWkt::Value::KIND_NOT_SET:
+  case ProtobufWkt::Value::kNullValue:
+  case ProtobufWkt::Value::kBoolValue:
+  case ProtobufWkt::Value::kNumberValue: {
+    // nothing here... we only need to transform strings
+  }
+  }
+}
+
+std::string SquashFilterConfig::replaceEnv(const std::string& attachment_template) {
   std::string s;
 
   const std::regex env_regex("\\{\\{ ([a-zA-Z_]+) \\}\\}");
@@ -59,9 +83,9 @@ std::string SquashFilterConfig::getAttachment(const std::string& attachment_temp
     std::string envar_name = match[1].str();
     const char* envar_value = std::getenv(envar_name.c_str());
     if (envar_value == nullptr) {
-      ENVOY_LOG(info, "Squash: no environment variable named {}.", envar_name);
+      ENVOY_LOG(warn, "Squash: no environment variable named {}.", envar_name);
     } else {
-      s.append(StringUtil::escape(envar_value));
+      s.append(envar_value);
     }
     end_last_match = start_match + match.length(0);
   };
@@ -116,8 +140,8 @@ FilterHeadersStatus SquashFilter::decodeHeaders(HeaderMap& headers, bool) {
   request->body().reset(new Buffer::OwnedImpl(config_->attachment_json()));
 
   state_ = CREATE_CONFIG;
-  in_flight_request_ = cm_.httpAsyncClientForCluster(config_->squash_cluster_name())
-                           .send(std::move(request), *this, config_->squash_request_timeout());
+  in_flight_request_ = cm_.httpAsyncClientForCluster(config_->cluster_name())
+                           .send(std::move(request), *this, config_->request_timeout());
 
   if (in_flight_request_ == nullptr) {
     state_ = INITIAL;
@@ -232,7 +256,7 @@ void SquashFilter::retry() {
     delay_timer_ =
         decoder_callbacks_->dispatcher().createTimer([this]() -> void { pollForAttachment(); });
   }
-  delay_timer_->enableTimer(config_->attachment_poll_every());
+  delay_timer_->enableTimer(config_->attachment_poll_period());
 }
 
 void SquashFilter::pollForAttachment() {
@@ -241,8 +265,8 @@ void SquashFilter::pollForAttachment() {
   request->headers().insertPath().value().setReference(debugConfigPath_);
   request->headers().insertHost().value().setReference(severAuthority());
 
-  in_flight_request_ = cm_.httpAsyncClientForCluster(config_->squash_cluster_name())
-                           .send(std::move(request), *this, config_->squash_request_timeout());
+  in_flight_request_ = cm_.httpAsyncClientForCluster(config_->cluster_name())
+                           .send(std::move(request), *this, config_->request_timeout());
   // no need to check in_flight_request_ is null as onFailure will take care of
   // that.
 }

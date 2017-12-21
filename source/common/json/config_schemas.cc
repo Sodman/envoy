@@ -935,23 +935,23 @@ const std::string Json::Schema::SQUASH_HTTP_FILTER_SCHEMA(R"EOF(
     "$schema": "http://json-schema.org/schema#",
     "type" : "object",
     "properties" : {
-      "squash_cluster": {
+      "cluster": {
         "type" : "string"
       },
       "attachment_template": {
-        "type" : "string"
+        "type" : "object"
       },
       "attachment_timeout_ms": {
         "type" : "number"
       },
-      "attachment_poll_every_ms": {
+      "attachment_poll_period_ms": {
         "type" : "number"
       },
-      "squash_request_timeout_ms": {
+      "request_timeout_ms": {
         "type" : "number"
       }
     },
-    "required": ["squash_cluster"],
+    "required": ["cluster", "attachment_template"],
     "additionalProperties" : false
   }
   )EOF");

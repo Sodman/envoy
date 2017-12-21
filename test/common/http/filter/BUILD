@@ -98,7 +98,9 @@ envoy_cc_test(
         "//source/common/http:header_map_lib",
         "//source/common/http/filter:squash_filter_lib",
         "//source/common/stats:stats_lib",
+        "//source/server/config/http:squash_lib",
         "//test/mocks/http:http_mocks",
+        "//test/mocks/server:server_mocks",
         "//test/mocks/upstream:upstream_mocks",
     ],
 )

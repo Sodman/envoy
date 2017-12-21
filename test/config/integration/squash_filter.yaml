@@ -20,12 +20,16 @@ static_resources:
           http_filters:
           - name: envoy.squash
             config:
-              squash_cluster: squash
-              attachment_template: '{"spec": { "attachment" : { "env": "{{ SQUASH_ENV_TEST }}" } } }'
+              cluster: squash
+              attachment_template:
+                spec:
+                  attachment:
+                    env: "{{ SQUASH_ENV_TEST }}"
+                  match_request: true
               attachment_timeout:
                 seconds: 0
                 nanos: 100000000
-              attachment_poll_every:
+              attachment_poll_period:
                 seconds: 1
                 nanos: 0
               squash_request_timeout:
