@@ -1,29 +1,27 @@
-
 #include <chrono>
 
-#include "squash_filter.h"
-#include "squash_filter_config.h"
-
-#include "test/mocks/upstream/mocks.h"
 #include "test/mocks/server/mocks.h"
+#include "test/mocks/upstream/mocks.h"
 #include "test/test_common/utility.h"
 
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
+#include "squash_filter.h"
+#include "squash_filter_config.h"
 
 using testing::Invoke;
 using testing::NiceMock;
 using testing::_;
 
-namespace Solo {
-namespace Squash {
+namespace Envoy {
+namespace Http {
 
 namespace {
-SquashFilterConfig constructSquashFilterConfigFromJson(
-    const Envoy::Json::Object &json, Envoy::Server::Configuration::FactoryContext &context) {
+SquashFilterConfig
+constructSquashFilterConfigFromJson(const Envoy::Json::Object& json,
+                                    Envoy::Server::Configuration::FactoryContext& context) {
   solo::squash::pb::SquashConfig proto_config;
-  Configuration::SquashFilterConfigFactory::translateSquashFilter(json,
-                                                                  proto_config);
+  Configuration::SquashFilterConfigFactory::translateSquashFilter(json, proto_config);
   return SquashFilterConfig(proto_config, context);
 }
 } // namespace
@@ -59,7 +57,6 @@ TEST(SoloFilterConfigTest, ParsesEnvironment) {
   EXPECT_EQ(expected_json, config.attachment_json());
 }
 
-
 TEST(SoloFilterConfigTest, ParsesAndEscapesEnvironment) {
   ::setenv("ESCAPE_ENV", "\"", 1);
 
@@ -91,10 +88,12 @@ TEST(SoloFilterConfigTest, ParsesDefaultEnvironment) {
   Envoy::Json::ObjectSharedPtr json_config = Envoy::Json::Factory::loadFromString(json);
   NiceMock<Envoy::Server::Configuration::MockFactoryContext> factory_context;
   auto config = constructSquashFilterConfigFromJson(*json_config, factory_context);
-  
+
   auto attachment_json = config.attachment_json();
-  Envoy::Json::ObjectSharedPtr attachment_json_obj = Envoy::Json::Factory::
-      loadFromString(attachment_json)->getObject("spec")->getObject("attachment");
+  Envoy::Json::ObjectSharedPtr attachment_json_obj =
+      Envoy::Json::Factory::loadFromString(attachment_json)
+          ->getObject("spec")
+          ->getObject("attachment");
 
   EXPECT_EQ("pod1", attachment_json_obj->getString("pod"));
   EXPECT_EQ("namespace1", attachment_json_obj->getString("namespace"));
@@ -102,17 +101,15 @@ TEST(SoloFilterConfigTest, ParsesDefaultEnvironment) {
 
 class SquashFilterTest : public testing::Test {
 public:
-  SquashFilterTest() {
-  }
+  SquashFilterTest() {}
 
 protected:
-  void SetUp() override {
-  }
+  void SetUp() override {}
 
   NiceMock<Envoy::Http::MockStreamDecoderFilterCallbacks> filter_callbacks_;
   NiceMock<Envoy::Server::Configuration::MockFactoryContext> factory_context_;
   NiceMock<Envoy::Event::MockTimer>* attachment_timeout_timer_{};
-  NiceMock<Envoy::Upstream::MockClusterManager> cm_;  
+  NiceMock<Envoy::Upstream::MockClusterManager> cm_;
 };
 
 TEST_F(SquashFilterTest, DecodeHeaderContinuesOnClientFail) {
@@ -120,14 +117,12 @@ TEST_F(SquashFilterTest, DecodeHeaderContinuesOnClientFail) {
   solo::squash::pb::SquashConfig p;
   p.set_squash_cluster("squash");
   SquashFilterConfigSharedPtr config(new SquashFilterConfig(p, factory_context_));
-  EXPECT_CALL(cm_, httpAsyncClientForCluster("squash"))
-      .WillOnce(ReturnRef(cm_.async_client_));
+  EXPECT_CALL(cm_, httpAsyncClientForCluster("squash")).WillOnce(ReturnRef(cm_.async_client_));
 
   EXPECT_CALL(cm_.async_client_, send_(_, _, _))
-      .WillOnce(Invoke([&](Envoy::Http::MessagePtr &,
-                           Envoy::Http::AsyncClient::Callbacks &callbacks,
-                           const Envoy::Optional<std::chrono::milliseconds> &)
-                           -> Envoy::Http::AsyncClient::Request * {
+      .WillOnce(Invoke([&](Envoy::Http::MessagePtr&, Envoy::Http::AsyncClient::Callbacks& callbacks,
+                           const Envoy::Optional<std::chrono::milliseconds>&)
+                           -> Envoy::Http::AsyncClient::Request* {
         callbacks.onFailure(Envoy::Http::AsyncClient::FailureReason::Reset);
         return nullptr;
       }));
@@ -139,10 +134,8 @@ TEST_F(SquashFilterTest, DecodeHeaderContinuesOnClientFail) {
                                          {"x-squash-debug", "true"},
                                          {":path", "/getsomething"}};
 
-  EXPECT_EQ(Envoy::Http::FilterHeadersStatus::Continue,
-            filter.decodeHeaders(headers, false));
-  EXPECT_EQ(Envoy::Http::FilterTrailersStatus::Continue,
-            filter.decodeTrailers(headers));
+  EXPECT_EQ(Envoy::Http::FilterHeadersStatus::Continue, filter.decodeHeaders(headers, false));
+  EXPECT_EQ(Envoy::Http::FilterTrailersStatus::Continue, filter.decodeTrailers(headers));
 }
 
 TEST_F(SquashFilterTest, Timeout) {
@@ -152,17 +145,15 @@ TEST_F(SquashFilterTest, Timeout) {
   p.set_squash_cluster("squash");
   SquashFilterConfigSharedPtr config(new SquashFilterConfig(p, factory_context_));
 
-  EXPECT_CALL(cm_, httpAsyncClientForCluster("squash"))
-      .WillOnce(ReturnRef(cm_.async_client_));
+  EXPECT_CALL(cm_, httpAsyncClientForCluster("squash")).WillOnce(ReturnRef(cm_.async_client_));
 
-  Envoy::Http::AsyncClient::Callbacks *callbacks;
+  Envoy::Http::AsyncClient::Callbacks* callbacks;
   Envoy::Http::MockAsyncClientRequest request(&cm_.async_client_);
 
   EXPECT_CALL(cm_.async_client_, send_(_, _, _))
-      .WillOnce(Invoke([&](Envoy::Http::MessagePtr &,
-                           Envoy::Http::AsyncClient::Callbacks &cb,
-                           const Envoy::Optional<std::chrono::milliseconds> &)
-                           -> Envoy::Http::AsyncClient::Request * {
+      .WillOnce(Invoke([&](Envoy::Http::MessagePtr&, Envoy::Http::AsyncClient::Callbacks& cb,
+                           const Envoy::Optional<std::chrono::milliseconds>&)
+                           -> Envoy::Http::AsyncClient::Request* {
         callbacks = &cb;
         return &request;
       }));
@@ -174,9 +165,8 @@ TEST_F(SquashFilterTest, Timeout) {
                                          {":authority", "www.solo.io"},
                                          {"x-squash-debug", "true"},
                                          {":path", "/getsomething"}};
-  EXPECT_EQ(Envoy::Http::FilterHeadersStatus::StopIteration,
-            filter.decodeHeaders(headers, false));
-  
+  EXPECT_EQ(Envoy::Http::FilterHeadersStatus::StopIteration, filter.decodeHeaders(headers, false));
+
   // invoke timeout
   Envoy::Buffer::OwnedImpl buffer("nothing here");
 
@@ -188,9 +178,8 @@ TEST_F(SquashFilterTest, Timeout) {
 
   attachment_timeout_timer_->callback_();
 
-  EXPECT_EQ(Envoy::Http::FilterDataStatus::Continue,
-            filter.decodeData(buffer, false));
+  EXPECT_EQ(Envoy::Http::FilterDataStatus::Continue, filter.decodeData(buffer, false));
 }
 
-} // namespace Squash
-} // namespace Solo
+} // namespace Http
+} // namespace Envoy

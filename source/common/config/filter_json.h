@@ -8,8 +8,8 @@
 #include "api/filter/http/lua.pb.h"
 #include "api/filter/http/rate_limit.pb.h"
 #include "api/filter/http/router.pb.h"
-#include "api/filter/http/transcoder.pb.h"
 #include "api/filter/http/squash.pb.h"
+#include "api/filter/http/transcoder.pb.h"
 #include "api/filter/network/client_ssl_auth.pb.h"
 #include "api/filter/network/http_connection_manager.pb.h"
 #include "api/filter/network/mongo_proxy.pb.h"
@@ -165,7 +165,7 @@ public:
    * @param proto_config destination v2 envoy::api::v2::filter::http::SquashConfig.
    */
   static void translateSquashConfig(const Json::Object& json_config,
-                              envoy::api::v2::filter::http::SquashConfig& proto_config);
+                                    envoy::api::v2::filter::http::SquashConfig& proto_config);
 };
 
 } // namespace Config

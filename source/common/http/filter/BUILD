@@ -81,6 +81,30 @@ envoy_cc_library(
 )
 
 envoy_cc_library(
+    name = "squash_filter_lib",
+    srcs = ["squash_filter.cc"],
+    hdrs = ["squash_filter.h"],
+    external_deps = ["envoy_filter_http_squash"],
+    deps = [
+        "//include/envoy/event:timer_interface",
+        "//include/envoy/http:codes_interface",
+        "//include/envoy/http:filter_interface",
+        "//include/envoy/http:header_map_interface",
+        "//include/envoy/runtime:runtime_interface",
+        "//include/envoy/stats:stats_interface",
+        "//include/envoy/stats:stats_macros",
+        "//include/envoy/upstream:cluster_manager_interface",
+        "//source/common/common:assert_lib",
+        "//source/common/common:empty_string",
+        "//source/common/http:codes_lib",
+        "//source/common/http:header_map_lib",
+        "//source/common/http:headers_lib",
+        "//source/common/protobuf:utility_lib",
+        "//source/common/router:config_lib",
+    ],
+)
+
+envoy_cc_library(
     name = "ratelimit_lib",
     srcs = ["ratelimit.cc"],
     deps = [
@@ -109,29 +133,5 @@ envoy_cc_library(
         "//source/common/json:config_schemas_lib",
         "//source/common/json:json_loader_lib",
         "//source/common/json:json_validator_lib",
-    ],
-)
-
-envoy_cc_library(
-    name = "squash_filter_lib",
-    srcs = ["squash_filter.cc"],
-    hdrs = ["squash_filter.h"],
-    external_deps = ["envoy_filter_http_squash"],
-    deps = [
-        "//include/envoy/event:timer_interface",
-        "//include/envoy/http:codes_interface",
-        "//include/envoy/http:filter_interface",
-        "//include/envoy/http:header_map_interface",
-        "//include/envoy/runtime:runtime_interface",
-        "//include/envoy/upstream:cluster_manager_interface",
-        "//include/envoy/stats:stats_interface",
-        "//include/envoy/stats:stats_macros",
-        "//source/common/common:assert_lib",
-        "//source/common/common:empty_string",
-        "//source/common/http:codes_lib",
-        "//source/common/http:header_map_lib",
-        "//source/common/http:headers_lib",
-        "//source/common/protobuf:utility_lib",
-        "//source/common/router:config_lib",
     ],
 )

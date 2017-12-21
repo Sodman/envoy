@@ -454,8 +454,8 @@ envoy_cc_test(
     ],
     deps = [
         ":http_integration_lib",
-        "//source/server/config/http:squash_lib",
         "//source/common/http:header_map_lib",
+        "//source/server/config/http:squash_lib",
         "//test/mocks/http:http_mocks",
         "//test/mocks/upstream:upstream_mocks",
         "//test/test_common:utility_lib",
