@@ -160,12 +160,12 @@ public:
                                envoy::api::v2::filter::network::ClientSSLAuth& proto_config);
 
   /**
-   * Translate a v1 JSON SquashConfig object to v2 envoy::api::v2::filter::http::SquashConfig.
+   * Translate a v1 JSON SquashConfig object to v2 envoy::api::v2::filter::http::Squash.
    * @param json_config source v1 JSON HTTP SquashConfig object.
-   * @param proto_config destination v2 envoy::api::v2::filter::http::SquashConfig.
+   * @param proto_config destination v2 envoy::api::v2::filter::http::Squash.
    */
   static void translateSquashConfig(const Json::Object& json_config,
-                                    envoy::api::v2::filter::http::SquashConfig& proto_config);
+                                    envoy::api::v2::filter::http::Squash& proto_config);
 };
 
 } // namespace Config

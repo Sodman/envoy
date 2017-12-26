@@ -18,7 +18,7 @@ namespace Http {
 
 class SquashFilterConfig : protected Logger::Loggable<Logger::Id::config> {
 public:
-  SquashFilterConfig(const envoy::api::v2::filter::http::SquashConfig& proto_config,
+  SquashFilterConfig(const envoy::api::v2::filter::http::Squash& proto_config,
                      Upstream::ClusterManager& clusterManager);
   const std::string& cluster_name() { return cluster_name_; }
   const std::string& attachment_json() { return attachment_json_; }

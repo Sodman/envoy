@@ -314,7 +314,7 @@ void FilterJson::translateGrpcJsonTranscoder(
 }
 
 void FilterJson::translateSquashConfig(const Json::Object& json_config,
-                                       envoy::api::v2::filter::http::SquashConfig& proto_config) {
+                                       envoy::api::v2::filter::http::Squash& proto_config) {
   json_config.validateSchema(Json::Schema::SQUASH_HTTP_FILTER_SCHEMA);
 
   JSON_UTIL_SET_STRING(json_config, proto_config, cluster);

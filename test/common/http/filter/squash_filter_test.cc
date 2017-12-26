@@ -25,7 +25,7 @@ namespace {
 SquashFilterConfig constructSquashFilterConfigFromJson(
     const Envoy::Json::Object& json,
     NiceMock<Envoy::Server::Configuration::MockFactoryContext>& context) {
-  envoy::api::v2::filter::http::SquashConfig proto_config;
+  envoy::api::v2::filter::http::Squash proto_config;
   Config::FilterJson::translateSquashConfig(json, proto_config);
   return SquashFilterConfig(proto_config, context.cluster_manager_);
 }
@@ -96,7 +96,7 @@ protected:
 
 TEST_F(SquashFilterTest, DecodeHeaderContinuesOnClientFail) {
 
-  envoy::api::v2::filter::http::SquashConfig p;
+  envoy::api::v2::filter::http::Squash p;
   p.set_cluster("squash");
   SquashFilterConfigSharedPtr config(new SquashFilterConfig(p, factory_context_.cluster_manager_));
   EXPECT_CALL(cm_, httpAsyncClientForCluster("squash")).WillOnce(ReturnRef(cm_.async_client_));
@@ -123,7 +123,7 @@ TEST_F(SquashFilterTest, DecodeHeaderContinuesOnClientFail) {
 TEST_F(SquashFilterTest, Timeout) {
   attachment_timeout_timer_ = new NiceMock<Envoy::Event::MockTimer>(&filter_callbacks_.dispatcher_);
 
-  envoy::api::v2::filter::http::SquashConfig p;
+  envoy::api::v2::filter::http::Squash p;
   p.set_cluster("squash");
   SquashFilterConfigSharedPtr config(new SquashFilterConfig(p, factory_context_.cluster_manager_));
 

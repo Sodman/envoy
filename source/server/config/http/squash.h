@@ -30,11 +30,11 @@ public:
   std::string name() override { return Config::HttpFilterNames::get().SQUASH; }
 
   ProtobufTypes::MessagePtr createEmptyConfigProto() override {
-    return ProtobufTypes::MessagePtr{new envoy::api::v2::filter::http::SquashConfig()};
+    return ProtobufTypes::MessagePtr{new envoy::api::v2::filter::http::Squash()};
   }
 
 private:
-  HttpFilterFactoryCb createFilter(const envoy::api::v2::filter::http::SquashConfig& proto_config,
+  HttpFilterFactoryCb createFilter(const envoy::api::v2::filter::http::Squash& proto_config,
                                    FactoryContext& context);
 };
 

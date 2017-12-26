@@ -13,7 +13,7 @@ namespace Envoy {
 namespace Http {
 
 SquashFilterConfig::SquashFilterConfig(
-    const envoy::api::v2::filter::http::SquashConfig& proto_config,
+    const envoy::api::v2::filter::http::Squash& proto_config,
     Upstream::ClusterManager& clusterManager)
     : cluster_name_(proto_config.cluster()),
       attachment_json_(getAttachment(proto_config.attachment_template())),
