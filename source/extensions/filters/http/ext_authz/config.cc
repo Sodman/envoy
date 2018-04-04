@@ -3,7 +3,7 @@
 #include <chrono>
 #include <string>
 
-#include "envoy/config/filter/http/ext_authz/v2/ext_authz.pb.validate.h"
+#include "envoy/config/filter/http/ext_authz/v2alpha/ext_authz.pb.validate.h"
 #include "envoy/registry/registry.h"
 
 #include "common/protobuf/utility.h"
@@ -17,7 +17,7 @@ namespace HttpFilters {
 namespace ExtAuthz {
 
 Server::Configuration::HttpFilterFactoryCb ExtAuthzFilterConfig::createFilter(
-    const envoy::config::filter::http::ext_authz::v2::ExtAuthz& proto_config, const std::string&,
+    const envoy::config::filter::http::ext_authz::v2alpha::ExtAuthz& proto_config, const std::string&,
     Server::Configuration::FactoryContext& context) {
   auto filter_config =
       std::make_shared<FilterConfig>(proto_config, context.localInfo(), context.scope(),
@@ -47,7 +47,7 @@ ExtAuthzFilterConfig::createFilterFactoryFromProto(const Protobuf::Message& prot
                                                    const std::string& stats_prefix,
                                                    Server::Configuration::FactoryContext& context) {
   return createFilter(
-      MessageUtil::downcastAndValidate<const envoy::config::filter::http::ext_authz::v2::ExtAuthz&>(
+      MessageUtil::downcastAndValidate<const envoy::config::filter::http::ext_authz::v2alpha::ExtAuthz&>(
           proto_config),
       stats_prefix, context);
 }
