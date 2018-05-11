@@ -163,7 +163,14 @@ void GrpcMuxImpl::onReceiveMessage(std::unique_ptr<envoy::api::v2::DiscoveryResp
     return;
   }
   if (api_state_[type_url].watches_.empty()) {
-    ENVOY_LOG(warn, "Ignoring unwatched type URL {}", type_url);
+    if (message->resources_size() == 0) {
+      api_state_[type_url].request_.set_response_nonce(message->nonce());
+    } else {
+      // TODO: should this be a panic?
+      // and if not should the nonce be set anyway?
+      // as if we dont set the nonce it will become stale by the mgmt server
+      ENVOY_LOG(warn, "Ignoring unwatched type URL {} {} {}", type_url, message->resources_size(), message->version_info());
+    }
     return;
   }
   try {
