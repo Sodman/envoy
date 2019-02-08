@@ -132,14 +132,9 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
     ENVOY_STREAM_LOG(debug, "ext_authz rejected the request", *callbacks_);
     ENVOY_STREAM_LOG(trace, "ext_authz downstream header(s):", *callbacks_);
     callbacks_->sendLocalReply(response->status_code, response->body,
-                               [& headers = response->headers_to_add, &callbacks = *callbacks_](
+                               [this, &response](
                                    Http::HeaderMap& response_headers) -> void {
-                                 for (const auto& header : headers) {
-                                   response_headers.remove(header.first);
-                                   response_headers.addCopy(header.first, header.second);
-                                   ENVOY_STREAM_LOG(trace, " '{}':'{}'", callbacks,
-                                                    header.first.get(), header.second);
-                                 }
+                                    addHeaders(response, response_headers);
                                },
                                absl::nullopt);
     callbacks_->streamInfo().setResponseFlag(StreamInfo::ResponseFlag::UnauthorizedExternalService);
@@ -154,22 +149,7 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
     // Only send headers if the response is ok.
     if (response->status == CheckStatus::OK) {
       ENVOY_STREAM_LOG(trace, "ext_authz upstream header(s):", *callbacks_);
-      for (const auto& header : response->headers_to_add) {
-        Http::HeaderEntry* header_to_modify = request_headers_->get(header.first);
-        if (header_to_modify) {
-          header_to_modify->value(header.second.c_str(), header.second.size());
-        } else {
-          request_headers_->addCopy(header.first, header.second);
-        }
-        ENVOY_STREAM_LOG(trace, " '{}':'{}'", *callbacks_, header.first.get(), header.second);
-      }
-      for (const auto& header : response->headers_to_append) {
-        Http::HeaderEntry* header_to_modify = request_headers_->get(header.first);
-        if (header_to_modify) {
-          Http::HeaderMapImpl::appendToHeader(header_to_modify->value(), header.second);
-          ENVOY_STREAM_LOG(trace, " '{}':'{}'", *callbacks_, header.first.get(), header.second);
-        }
-      }
+      addHeaders(response, *request_headers_);
     }
 
     if (!initiating_call_) {
@@ -177,6 +157,33 @@ void Filter::onComplete(Filters::Common::ExtAuthz::ResponsePtr&& response) {
       callbacks_->continueDecoding();
     }
   }
+}
+
+void Filter::addHeaders(const Filters::Common::ExtAuthz::ResponsePtr& response, Http::HeaderMap& headers) {
+    //  for (const auto& header : response->headers_to_add) {
+    //    Http::HeaderEntry* header_to_modify = headers.get(header.first);
+    //    if (header_to_modify) {
+    //      header_to_modify->value(header.second.c_str(), header.second.size());
+    //    } else {
+    //      headers.addCopy(header.first, header.second);
+    //    }
+    //    ENVOY_STREAM_LOG(trace, " '{}':'{}'", *callbacks_, header.first.get(), header.second);
+    //  }
+      for (const auto& header : response->headers_to_add) {
+        headers.remove(header.first);
+      }
+      for (const auto& header : response->headers_to_add) {
+        headers.addCopy(header.first, header.second);
+        ENVOY_STREAM_LOG(trace, " '{}':'{}'", *callbacks_, header.first.get(), header.second);
+      }
+      
+      for (const auto& header : response->headers_to_append) {
+        Http::HeaderEntry* header_to_modify = headers.get(header.first);
+        if (header_to_modify) {
+          Http::HeaderMapImpl::appendToHeader(header_to_modify->value(), header.second);
+          ENVOY_STREAM_LOG(trace, " '{}':'{}'", *callbacks_, header.first.get(), header.second);
+        }
+      }
 }
 
 } // namespace ExtAuthz

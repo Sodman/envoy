@@ -411,12 +411,19 @@ TEST_F(HttpFilterTestParam, ImmediateOkResponse) {
 TEST_F(HttpFilterTestParam, ImmediateDeniedResponseWithHttpAttributes) {
   InSequence s;
 
+  // `bar` will be appended to this header.
+  const Http::LowerCaseString key_to_append{"baz"};
+
+  // `foo` will be added to this key.
+  const Http::LowerCaseString key_to_add{"foo"};
+
   prepareCheck();
 
   Filters::Common::ExtAuthz::Response response{};
   response.status = Filters::Common::ExtAuthz::CheckStatus::Denied;
   response.status_code = Http::Code::Unauthorized;
-  response.headers_to_add = Http::HeaderVector{{Http::LowerCaseString{"foo"}, "bar"}};
+  response.headers_to_append = Http::HeaderVector{{key_to_append, "foo"},{key_to_append, "bar"}};
+  response.headers_to_add = Http::HeaderVector{{key_to_add, "bar1"},{key_to_add, "bar2"}};
   response.body = std::string{"baz"};
 
   auto response_ptr = std::make_unique<Filters::Common::ExtAuthz::Response>(response);
@@ -426,12 +433,39 @@ TEST_F(HttpFilterTestParam, ImmediateDeniedResponseWithHttpAttributes) {
           WithArgs<0>(Invoke([&](Filters::Common::ExtAuthz::RequestCallbacks& callbacks) -> void {
             callbacks.onComplete(std::move(response_ptr));
           })));
+
+  EXPECT_CALL(filter_callbacks_, encodeHeaders_(_, _))
+      .WillOnce(
+          WithArgs<0>(Invoke([&](Http::HeaderMap& headers) -> void {
+            Http::TestHeaderMapImpl test_headers(headers);
+           // EXPECT_EQ(test_headers.get_(key_to_add), "bar2");
+            bool barsFound[2] = {false};
+        test_headers.iterate(
+        [](const Http::HeaderEntry& header, void* context) -> Http::HeaderMap::Iterate {
+          bool* barsFound = static_cast<bool*>(context);
+          if (header.key() == "foo") {
+            if (header.value() == "bar1") {
+              barsFound[0] = true;
+            }
+            if (header.value() == "bar2") {
+              barsFound[1] = true;
+            }
+          }
+          return Http::HeaderMap::Iterate::Continue;
+        }, barsFound);
+
+            EXPECT_TRUE(barsFound[0]);
+            EXPECT_TRUE(barsFound[1]);
+//            EXPECT_EQ(test_headers.get_(key_to_append), "foo,bar");
+          })));
+
   EXPECT_CALL(filter_callbacks_, continueDecoding()).Times(0);
   EXPECT_EQ(Http::FilterHeadersStatus::StopIteration,
             filter_->decodeHeaders(request_headers_, false));
+  EXPECT_EQ(1U, filter_callbacks_.clusterInfo()->statsScope().counter("ext_authz.denied").value());
   EXPECT_EQ(Http::FilterDataStatus::StopIterationAndWatermark, filter_->decodeData(data_, false));
   EXPECT_EQ(Http::FilterTrailersStatus::StopIteration, filter_->decodeTrailers(request_headers_));
-  EXPECT_EQ(1U, filter_callbacks_.clusterInfo()->statsScope().counter("ext_authz.denied").value());
+
 }
 
 // Test that an synchronous ok response from the authorization service passing additional HTTP
