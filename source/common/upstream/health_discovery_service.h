@@ -43,7 +43,8 @@ public:
              ClusterInfoFactory& info_factory, ClusterManager& cm,
              const LocalInfo::LocalInfo& local_info, Event::Dispatcher& dispatcher,
              Runtime::RandomGenerator& random, Singleton::Manager& singleton_manager,
-             ThreadLocal::SlotAllocator& tls, Api::Api& api);
+             ThreadLocal::SlotAllocator& tls,
+             ProtobufMessage::ValidationVisitor& validation_visitor, Api::Api& api);
 
   // Upstream::Cluster
   InitializePhase initializePhase() const override { return InitializePhase::Primary; }
@@ -58,7 +59,8 @@ public:
 
   // Creates and starts healthcheckers to its endpoints
   void startHealthchecks(AccessLog::AccessLogManager& access_log_manager, Runtime::Loader& runtime,
-                         Runtime::RandomGenerator& random, Event::Dispatcher& dispatcher);
+                         Runtime::RandomGenerator& random, Event::Dispatcher& dispatcher,
+                         Api::Api& api);
 
   std::vector<Upstream::HealthCheckerSharedPtr> healthCheckers() { return health_checkers_; };
 
@@ -80,9 +82,10 @@ private:
   HostVectorSharedPtr initial_hosts_;
   ClusterInfoConstSharedPtr info_;
   std::vector<Upstream::HealthCheckerSharedPtr> health_checkers_;
+  ProtobufMessage::ValidationVisitor& validation_visitor_;
 };
 
-typedef std::shared_ptr<HdsCluster> HdsClusterPtr;
+using HdsClusterPtr = std::shared_ptr<HdsCluster>;
 
 /**
  * All hds stats. @see stats_macros.h
@@ -108,19 +111,18 @@ struct HdsDelegateStats {
  * server with a set of hosts to healthcheck, healthchecking them, and reporting
  * back the results.
  */
-class HdsDelegate
-    : Grpc::TypedAsyncStreamCallbacks<envoy::service::discovery::v2::HealthCheckSpecifier>,
-      Logger::Loggable<Logger::Id::upstream> {
+class HdsDelegate : Grpc::AsyncStreamCallbacks<envoy::service::discovery::v2::HealthCheckSpecifier>,
+                    Logger::Loggable<Logger::Id::upstream> {
 public:
-  HdsDelegate(Stats::Scope& scope, Grpc::AsyncClientPtr async_client, Event::Dispatcher& dispatcher,
-              Runtime::Loader& runtime, Envoy::Stats::Store& stats,
+  HdsDelegate(Stats::Scope& scope, Grpc::RawAsyncClientPtr async_client,
+              Event::Dispatcher& dispatcher, Runtime::Loader& runtime, Envoy::Stats::Store& stats,
               Ssl::ContextManager& ssl_context_manager, Runtime::RandomGenerator& random,
               ClusterInfoFactory& info_factory, AccessLog::AccessLogManager& access_log_manager,
               ClusterManager& cm, const LocalInfo::LocalInfo& local_info, Server::Admin& admin,
               Singleton::Manager& singleton_manager, ThreadLocal::SlotAllocator& tls,
-              Api::Api& api);
+              ProtobufMessage::ValidationVisitor& validation_visitor, Api::Api& api);
 
-  // Grpc::TypedAsyncStreamCallbacks
+  // Grpc::AsyncStreamCallbacks
   void onCreateInitialMetadata(Http::HeaderMap& metadata) override;
   void onReceiveInitialMetadata(Http::HeaderMapPtr&& metadata) override;
   void onReceiveMessage(
@@ -145,11 +147,14 @@ private:
   HdsDelegateStats stats_;
   const Protobuf::MethodDescriptor& service_method_;
 
-  Grpc::AsyncClientPtr async_client_;
-  Grpc::AsyncStream* stream_{};
+  Grpc::AsyncClient<envoy::service::discovery::v2::HealthCheckRequestOrEndpointHealthResponse,
+                    envoy::service::discovery::v2::HealthCheckSpecifier>
+      async_client_;
+  Grpc::AsyncStream<envoy::service::discovery::v2::HealthCheckRequestOrEndpointHealthResponse>
+      stream_{};
   Event::Dispatcher& dispatcher_;
   Runtime::Loader& runtime_;
-  Envoy::Stats::Store& store_stats;
+  Envoy::Stats::Store& store_stats_;
   Ssl::ContextManager& ssl_context_manager_;
   Runtime::RandomGenerator& random_;
   ClusterInfoFactory& info_factory_;
@@ -170,16 +175,6 @@ private:
   Event::TimerPtr hds_retry_timer_;
   BackOffStrategyPtr backoff_strategy_;
 
-  /**
-   * TODO(lilika): Add API knob for RetryInitialDelayMilliseconds
-   * and RetryMaxDelayMilliseconds, instead of hardcoding them.
-   *
-   * Parameters of the jittered backoff strategy that defines how often
-   * we retry to establish a stream to the management server
-   */
-  const uint32_t RetryInitialDelayMilliseconds = 1000;
-  const uint32_t RetryMaxDelayMilliseconds = 30000;
-
   // Soft limit on size of the cluster’s connections read and write buffers.
   static constexpr uint32_t ClusterConnectionBufferLimitBytes = 32768;
 
@@ -190,10 +185,12 @@ private:
 
   // How often envoy reports the healthcheck results to the server
   uint32_t server_response_ms_ = 0;
+
+  ProtobufMessage::ValidationVisitor& validation_visitor_;
   Api::Api& api_;
 };
 
-typedef std::unique_ptr<HdsDelegate> HdsDelegatePtr;
+using HdsDelegatePtr = std::unique_ptr<HdsDelegate>;
 
 } // namespace Upstream
 } // namespace Envoy

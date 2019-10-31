@@ -8,6 +8,7 @@
 #include "common/config/datasource.h"
 #include "common/config/utility.h"
 #include "common/grpc/google_grpc_creds_impl.h"
+#include "common/protobuf/message_validator_impl.h"
 #include "common/protobuf/utility.h"
 
 namespace Envoy {
@@ -27,12 +28,15 @@ FileBasedMetadataGrpcCredentialsFactory::getChannelCredentials(
     case envoy::api::v2::core::GrpcService::GoogleGrpc::CallCredentials::kFromPlugin: {
       if (credential.from_plugin().name() == GrpcCredentialsNames::get().FileBasedMetadata) {
         FileBasedMetadataGrpcCredentialsFactory file_based_metadata_credentials_factory;
+        // We don't deal with validation failures here at runtime today, see
+        // https://github.com/envoyproxy/envoy/issues/8010.
         const Envoy::ProtobufTypes::MessagePtr file_based_metadata_config_message =
             Envoy::Config::Utility::translateToFactoryConfig(
-                credential.from_plugin(), file_based_metadata_credentials_factory);
+                credential.from_plugin(), ProtobufMessage::getNullValidationVisitor(),
+                file_based_metadata_credentials_factory);
         const auto& file_based_metadata_config = Envoy::MessageUtil::downcastAndValidate<
             const envoy::config::grpc_credential::v2alpha::FileBasedMetadataConfig&>(
-            *file_based_metadata_config_message);
+            *file_based_metadata_config_message, ProtobufMessage::getNullValidationVisitor());
         std::shared_ptr<grpc::CallCredentials> new_call_creds = grpc::MetadataCredentialsFromPlugin(
             std::make_unique<FileBasedMetadataAuthenticator>(file_based_metadata_config, api));
         if (call_creds == nullptr) {

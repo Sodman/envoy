@@ -3,7 +3,6 @@ licenses(["notice"])  # Apache 2
 load(
     "//bazel:envoy_build_system.bzl",
     "envoy_cc_test_library",
-    "envoy_google_grpc_external_deps",
     "envoy_package",
 )
 
@@ -20,6 +19,7 @@ envoy_cc_test_library(
     srcs = [
         "main.cc",
         "test_listener.cc",
+        "test_runner.cc",
         "test_runner.h",
     ],
     hdrs = ["test_listener.h"],
@@ -31,6 +31,7 @@ envoy_cc_test_library(
         "//source/common/common:thread_lib",
         "//source/common/event:libevent_lib",
         "//source/common/http/http2:codec_lib",
+        "//source/exe:process_wide_lib",
         "//test/common/runtime:utility_lib",
         "//test/mocks/access_log:access_log_mocks",
         "//test/test_common:environment_lib",
@@ -38,6 +39,6 @@ envoy_cc_test_library(
         "//test/test_common:printers_lib",
     ] + select({
         "//bazel:disable_signal_trace": [],
-        "//conditions:default": ["//source/exe:sigaction_lib"],
-    }) + envoy_google_grpc_external_deps(),
+        "//conditions:default": ["//source/common/signal:sigaction_lib"],
+    }),
 )

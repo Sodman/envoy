@@ -40,28 +40,33 @@ TEST(RedisProxyFilterConfigFactoryTest, NoUpstreamDefined) {
 
 TEST(RedisProxyFilterConfigFactoryTest, RedisProxyNoSettings) {
   const std::string yaml = R"EOF(
-cluster: fake_cluster
+prefix_routes:
+  catch_all_route:
+    cluster: fake_cluster
 stat_prefix: foo
   )EOF";
 
   envoy::config::filter::network::redis_proxy::v2::RedisProxy proto_config;
-  EXPECT_THROW_WITH_REGEX(MessageUtil::loadFromYamlAndValidate(yaml, proto_config),
+  EXPECT_THROW_WITH_REGEX(TestUtility::loadFromYamlAndValidate(yaml, proto_config),
                           ProtoValidationException, "value is required");
 }
 
 TEST(RedisProxyFilterConfigFactoryTest, RedisProxyNoOpTimeout) {
   const std::string yaml = R"EOF(
-cluster: fake_cluster
+prefix_routes:
+  catch_all_route:
+    cluster: fake_cluster
 stat_prefix: foo
 settings: {}
   )EOF";
 
   envoy::config::filter::network::redis_proxy::v2::RedisProxy proto_config;
-  EXPECT_THROW_WITH_REGEX(MessageUtil::loadFromYamlAndValidate(yaml, proto_config),
+  EXPECT_THROW_WITH_REGEX(TestUtility::loadFromYamlAndValidate(yaml, proto_config),
                           ProtoValidationException, "embedded message failed validation");
 }
 
-TEST(RedisProxyFilterConfigFactoryTest, RedisProxyCorrectProto) {
+TEST(RedisProxyFilterConfigFactoryTest,
+     DEPRECATED_FEATURE_TEST(RedisProxyCorrectProtoLegacyCluster)) {
   const std::string yaml = R"EOF(
 cluster: fake_cluster
 stat_prefix: foo
@@ -70,10 +75,53 @@ settings:
   )EOF";
 
   envoy::config::filter::network::redis_proxy::v2::RedisProxy proto_config{};
-  MessageUtil::loadFromYamlAndValidate(yaml, proto_config);
+  TestUtility::loadFromYamlAndValidate(yaml, proto_config);
   NiceMock<Server::Configuration::MockFactoryContext> context;
   RedisProxyFilterConfigFactory factory;
   Network::FilterFactoryCb cb = factory.createFilterFactoryFromProto(proto_config, context);
+  EXPECT_TRUE(factory.isTerminalFilter());
+  Network::MockConnection connection;
+  EXPECT_CALL(connection, addReadFilter(_));
+  cb(connection);
+}
+
+TEST(RedisProxyFilterConfigFactoryTest,
+     DEPRECATED_FEATURE_TEST(RedisProxyCorrectProtoLegacyCatchAllCluster)) {
+  const std::string yaml = R"EOF(
+prefix_routes:
+  catch_all_cluster: fake_cluster
+stat_prefix: foo
+settings:
+  op_timeout: 0.02s
+  )EOF";
+
+  envoy::config::filter::network::redis_proxy::v2::RedisProxy proto_config{};
+  TestUtility::loadFromYamlAndValidate(yaml, proto_config);
+  NiceMock<Server::Configuration::MockFactoryContext> context;
+  RedisProxyFilterConfigFactory factory;
+  Network::FilterFactoryCb cb = factory.createFilterFactoryFromProto(proto_config, context);
+  EXPECT_TRUE(factory.isTerminalFilter());
+  Network::MockConnection connection;
+  EXPECT_CALL(connection, addReadFilter(_));
+  cb(connection);
+}
+
+TEST(RedisProxyFilterConfigFactoryTest, RedisProxyCorrectProto) {
+  const std::string yaml = R"EOF(
+prefix_routes:
+  catch_all_route:
+    cluster: fake_cluster
+stat_prefix: foo
+settings:
+  op_timeout: 0.02s
+  )EOF";
+
+  envoy::config::filter::network::redis_proxy::v2::RedisProxy proto_config{};
+  TestUtility::loadFromYamlAndValidate(yaml, proto_config);
+  NiceMock<Server::Configuration::MockFactoryContext> context;
+  RedisProxyFilterConfigFactory factory;
+  Network::FilterFactoryCb cb = factory.createFilterFactoryFromProto(proto_config, context);
+  EXPECT_TRUE(factory.isTerminalFilter());
   Network::MockConnection connection;
   EXPECT_CALL(connection, addReadFilter(_));
   cb(connection);
@@ -81,7 +129,9 @@ settings:
 
 TEST(RedisProxyFilterConfigFactoryTest, RedisProxyEmptyProto) {
   const std::string yaml = R"EOF(
-cluster: fake_cluster
+prefix_routes:
+  catch_all_route:
+    cluster: fake_cluster
 stat_prefix: foo
 settings:
   op_timeout: 0.02s
@@ -93,7 +143,7 @@ settings:
       *dynamic_cast<envoy::config::filter::network::redis_proxy::v2::RedisProxy*>(
           factory.createEmptyConfigProto().get());
 
-  MessageUtil::loadFromYamlAndValidate(yaml, proto_config);
+  TestUtility::loadFromYamlAndValidate(yaml, proto_config);
 
   Network::FilterFactoryCb cb = factory.createFilterFactoryFromProto(proto_config, context);
   Network::MockConnection connection;

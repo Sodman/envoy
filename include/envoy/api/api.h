@@ -6,6 +6,7 @@
 #include "envoy/common/time.h"
 #include "envoy/event/dispatcher.h"
 #include "envoy/filesystem/filesystem.h"
+#include "envoy/server/process_context.h"
 #include "envoy/stats/store.h"
 #include "envoy/thread/thread.h"
 
@@ -17,7 +18,7 @@ namespace Api {
  */
 class Api {
 public:
-  virtual ~Api() {}
+  virtual ~Api() = default;
 
   /**
    * Allocate a dispatcher.
@@ -47,9 +48,19 @@ public:
    * @return a reference to the TimeSource
    */
   virtual TimeSource& timeSource() PURE;
+
+  /**
+   * @return a constant reference to the root Stats::Scope
+   */
+  virtual const Stats::Scope& rootScope() PURE;
+
+  /**
+   * @return an optional reference to the ProcessContext
+   */
+  virtual OptProcessContextRef processContext() PURE;
 };
 
-typedef std::unique_ptr<Api> ApiPtr;
+using ApiPtr = std::unique_ptr<Api>;
 
 } // namespace Api
 } // namespace Envoy

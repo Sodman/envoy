@@ -5,10 +5,10 @@ Overview
 
 The Envoy v2 APIs are defined as `proto3
 <https://developers.google.com/protocol-buffers/docs/proto3>`_ `Protocol Buffers
-<https://developers.google.com/protocol-buffers/>`_ in the `data plane API
-repository <https://github.com/envoyproxy/data-plane-api/tree/master/envoy/api>`_. They support
+<https://developers.google.com/protocol-buffers/>`_ in the :repo:`api tree <api/>`. They
+support:
 
-* Streaming delivery of :repo:`xDS <api/XDS_PROTOCOL.md>` API updates via gRPC. This reduces
+* Streaming delivery of :ref:`xDS <xds_protocol>` API updates via gRPC. This reduces
   resource requirements and can lower the update latency.
 * A new REST-JSON API in which the JSON/YAML formats are derived mechanically via the `proto3
   canonical JSON mapping
@@ -16,11 +16,11 @@ repository <https://github.com/envoyproxy/data-plane-api/tree/master/envoy/api>`
 * Delivery of updates via the filesystem, REST-JSON or gRPC endpoints.
 * Advanced load balancing through an extended endpoint assignment API and load
   and resource utilization reporting to management servers.
-* :repo:`Stronger consistency and ordering properties
-  <api/XDS_PROTOCOL.md#eventual-consistency-considerations>`
+* :ref:`Stronger consistency and ordering properties
+  <xds_protocol_eventual_consistency_considerations>`
   when needed. The v2 APIs still maintain a baseline eventual consistency model.
 
-See the :repo:`xDS protocol description <api/XDS_PROTOCOL.md>` for
+See the :ref:`xDS protocol description <xds_protocol>` for
 further details on aspects of v2 message exchange between Envoy and the management server.
 
 .. _config_overview_v2_bootstrap:
@@ -199,8 +199,8 @@ In the above example, the EDS management server could then return a proto encodi
 
 
 The versioning and type URL scheme that appear above are explained in more
-detail in the :repo:`streaming gRPC subscription protocol
-<api/XDS_PROTOCOL.md#streaming-grpc-subscriptions>`
+detail in the :ref:`streaming gRPC subscription protocol
+<xds_protocol_streaming_grpc_subscriptions>`
 documentation.
 
 Dynamic
@@ -334,14 +334,14 @@ The management server could respond to EDS requests with:
 
 .. _config_overview_v2_management_server:
 
-Management server
+xDS API endpoints
 -----------------
 
 A v2 xDS management server will implement the below endpoints as required for
 gRPC and/or REST serving. In both streaming gRPC and
 REST-JSON cases, a :ref:`DiscoveryRequest <envoy_api_msg_DiscoveryRequest>` is sent and a
 :ref:`DiscoveryResponse <envoy_api_msg_DiscoveryResponse>` received following the
-:repo:`xDS protocol <api/XDS_PROTOCOL.md>`.
+:ref:`xDS protocol <xds_protocol>`.
 
 .. _v2_grpc_streaming_endpoints:
 
@@ -421,8 +421,69 @@ for the service definition. This is used by Envoy as a client when
             cluster_name: some_xds_cluster
 
 is set in the :ref:`rds
-<envoy_api_field_config.filter.network.http_connection_manager.v2.HttpConnectionManager.rds>` field of the :ref:`HttpConnectionManager
+<envoy_api_field_config.filter.network.http_connection_manager.v2.HttpConnectionManager.rds>` field
+of the :ref:`HttpConnectionManager
 <envoy_api_msg_config.filter.network.http_connection_manager.v2.HttpConnectionManager>` config.
+
+.. http:post:: /envoy.api.v2.ScopedRoutesDiscoveryService/StreamScopedRoutes
+
+See :repo:`srds.proto
+<api/envoy/api/v2/srds.proto>`
+for the service definition. This is used by Envoy as a client when
+
+.. code-block:: yaml
+
+    name: some_scoped_route_name
+    scoped_rds:
+      config_source:
+        api_config_source:
+          api_type: GRPC
+          grpc_services:
+            envoy_grpc:
+              cluster_name: some_xds_cluster
+
+is set in the :ref:`scoped_routes
+<envoy_api_field_config.filter.network.http_connection_manager.v2.HttpConnectionManager.scoped_routes>`
+field of the :ref:`HttpConnectionManager
+<envoy_api_msg_config.filter.network.http_connection_manager.v2.HttpConnectionManager>` config.
+
+.. http:post:: /envoy.service.discovery.v2.SecretDiscoveryService/StreamSecrets
+
+See :repo:`sds.proto
+<api/envoy/service/discovery/v2/srds.proto>`
+for the service definition. This is used by Envoy as a client when
+
+.. code-block:: yaml
+
+    name: some_secret_name
+    config_source:
+      api_config_source:
+        api_type: GRPC
+        grpc_services:
+          envoy_grpc:
+            cluster_name: some_xds_cluster
+
+is set inside a :ref:`SdsSecretConfig <envoy_api_msg_auth.SdsSecretConfig>` message. This message
+is used in various places such as the :ref:`CommonTlsContext <envoy_api_msg_auth.CommonTlsContext>`.
+
+.. http:post:: /envoy.service.discovery.v2.RuntimeDiscoveryService/StreamRuntime
+
+See :repo:`rtds.proto
+<api/envoy/service/discovery/v2/rtds.proto>`
+for the service definition. This is used by Envoy as a client when
+
+.. code-block:: yaml
+
+    name: some_runtime_layer_name
+    config_source:
+      api_config_source:
+        api_type: GRPC
+        grpc_services:
+          envoy_grpc:
+            cluster_name: some_xds_cluster
+
+is set inside the :ref:`rtds_layer <envoy_api_field_config.bootstrap.v2.RuntimeLayer.rtds_layer>`
+field.
 
 REST endpoints
 ^^^^^^^^^^^^^^
@@ -496,6 +557,12 @@ is set in the :ref:`rds
 <envoy_api_field_config.filter.network.http_connection_manager.v2.HttpConnectionManager.rds>` field of the :ref:`HttpConnectionManager
 <envoy_api_msg_config.filter.network.http_connection_manager.v2.HttpConnectionManager>` config.
 
+.. note::
+
+    The management server responding to these endpoints must respond with a :ref:`DiscoveryResponse <envoy_api_msg_DiscoveryResponse>`
+    along with a HTTP status of 200. Additionally, if the configuration that would be supplied has not changed (as indicated by the version
+    supplied by the Envoy client) then the management server can respond with an empty body and a HTTP status of 304.
+
 .. _config_overview_v2_ads:
 
 Aggregated Discovery Service
@@ -524,8 +591,7 @@ synchronization to correctly sequence the update. With ADS, the management
 server would deliver the CDS, EDS and then RDS updates on a single stream.
 
 ADS is only available for gRPC streaming (not REST) and is described more fully
-in :repo:`this
-<api/XDS_PROTOCOL.md#aggregated-discovery-services-ads>`
+in :ref:`xDS <xds_protocol_ads>`
 document. The gRPC endpoint is:
 
 .. http:post:: /envoy.service.discovery.v2.AggregatedDiscoveryService/StreamAggregatedResources
@@ -565,6 +631,32 @@ to
 with the effect that the LDS stream will be directed to *some_ads_cluster* over
 the shared ADS channel.
 
+.. _config_overview_v2_delta:
+
+Delta endpoints
+---------------
+
+The REST, filesystem, and original gRPC xDS implementations all deliver "state of the world" updates:
+every CDS update must contain every cluster, with the absence of a cluster from an update implying
+that the cluster is gone. For Envoy deployments with huge amounts of resources and even a trickle of
+churn, these state-of-the-world updates can be cumbersome.
+
+As of 1.12.0, Envoy supports a "delta" variant of xDS (including ADS), where updates only contain
+resources added/changed/removed. Delta xDS is a gRPC (only) protocol. Delta uses different
+request/response protos than SotW (DeltaDiscovery{Request,Response}); see
+:repo:`discovery.proto <api/envoy/api/v2/discovery.proto>`. Conceptually, delta should be viewed as
+a new xDS transport type: there is static, filesystem, REST, gRPC-SotW, and now gRPC-delta.
+(Envoy's implementation of the gRPC-SotW/delta client happens to share most of its code between the
+two, and something similar is likely possible on the server side. However, they are in fact
+incompatible protocols.
+:ref:`The specification of the delta xDS protocol's behavior is here <xds_protocol_delta>`.)
+
+To use delta, simply set the api_type field of your
+:ref:`ApiConfigSource <envoy_api_msg_core.ApiConfigSource>` proto(s) to DELTA_GRPC.
+That works for both xDS and ADS; for ADS, it's the api_type field of
+:ref:`DynamicResources.ads_config <envoy_api_field_config.bootstrap.v2.Bootstrap.dynamic_resources>`,
+as described in the previous section.
+
 .. _config_overview_v2_mgmt_con_issues:
 
 Management Server Unreachability
@@ -594,35 +686,26 @@ Management Server has a statistics tree rooted at *control_plane.* with the foll
    rate_limit_enforced, Counter, Total number of times rate limit was enforced for management server requests
    pending_requests, Gauge, Total number of pending requests when the rate limit was enforced
 
-.. _config_overview_v2_status:
+.. _subscription_statistics:
 
-Status
-------
+xDS subscription statistics
+---------------------------
 
-All features described in the :ref:`v2 API reference <envoy_api_reference>` are
-implemented unless otherwise noted. In the v2 API reference and the
-`v2 API repository
-<https://github.com/envoyproxy/data-plane-api/tree/master>`_, all protos are
-*frozen* unless they are tagged as *draft* or *experimental*. Here, *frozen*
-means that we will not break wire format compatibility.
+Envoy discovers its various dynamic resources via discovery
+services referred to as *xDS*. Resources are requested via :ref:`subscriptions <xds_protocol>`,
+by specifying a filesystem path to watch, initiating gRPC streams or polling a REST-JSON URL.
 
-*Frozen* protos may be further extended, e.g. by adding new fields, in a
-manner that does not break `backwards compatibility
-<https://developers.google.com/protocol-buffers/docs/overview#how-do-they-work>`_.
-Fields in the above protos may be later deprecated, subject to the
-:repo:`breaking change policy
-<CONTRIBUTING.md#breaking-change-policy>`,
-when their related functionality is no longer required. While frozen APIs
-have their wire format compatibility preserved, we reserve the right to change
-proto namespaces, file locations and nesting relationships, which may cause
-breaking code changes. We will aim to minimize the churn here.
+The following statistics are generated for all subscriptions.
 
-Protos tagged *draft*, meaning that they are near finalized, are
-likely to be at least partially implemented in Envoy but may have wire format
-breaking changes made prior to freezing.
+.. csv-table::
+ :header: Name, Type, Description
+ :widths: 1, 1, 2
 
-Protos tagged *experimental*, have the same caveats as draft protos
-and may have major changes made prior to Envoy implementation and freezing.
-
-The current open v2 API issues are tracked `here
-<https://github.com/envoyproxy/envoy/issues?q=is%3Aopen+is%3Aissue+label%3A%22v2+API%22>`_.
+ config_reload, Counter, Total API fetches that resulted in a config reload due to a different config
+ init_fetch_timeout, Counter, Total :ref:`initial fetch timeouts <envoy_api_field_core.ConfigSource.initial_fetch_timeout>`
+ update_attempt, Counter, Total API fetches attempted
+ update_success, Counter, Total API fetches completed successfully
+ update_failure, Counter, Total API fetches that failed because of network errors
+ update_rejected, Counter, Total API fetches that failed because of schema/validation errors
+ version, Gauge, Hash of the contents from the last successful API fetch
+ control_plane.connected_state, Gauge, A boolean (1 for connected and 0 for disconnected) that indicates the current connection state with management server

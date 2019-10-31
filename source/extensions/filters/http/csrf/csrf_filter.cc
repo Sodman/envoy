@@ -14,6 +14,11 @@ namespace Extensions {
 namespace HttpFilters {
 namespace Csrf {
 
+struct RcDetailsValues {
+  const std::string OriginMismatch = "csrf_origin_mismatch";
+};
+using RcDetails = ConstSingleton<RcDetailsValues>;
+
 namespace {
 bool isModifyMethod(const Http::HeaderMap& headers) {
   const Envoy::Http::HeaderEntry* method = headers.Method();
@@ -23,7 +28,7 @@ bool isModifyMethod(const Http::HeaderMap& headers) {
   const absl::string_view method_type = method->value().getStringView();
   const auto& method_values = Http::Headers::get().MethodValues;
   return (method_type == method_values.Post || method_type == method_values.Put ||
-          method_type == method_values.Delete);
+          method_type == method_values.Delete || method_type == method_values.Patch);
 }
 
 absl::string_view hostAndPort(const Http::HeaderEntry* header) {
@@ -54,10 +59,9 @@ static CsrfStats generateStats(const std::string& prefix, Stats::Scope& scope) {
   return CsrfStats{ALL_CSRF_STATS(POOL_COUNTER_PREFIX(scope, final_prefix))};
 }
 
-static const CsrfPolicy
-generatePolicy(const envoy::config::filter::http::csrf::v2::CsrfPolicy& policy,
-               Runtime::Loader& runtime) {
-  return CsrfPolicy(policy, runtime);
+static CsrfPolicyPtr generatePolicy(const envoy::config::filter::http::csrf::v2::CsrfPolicy& policy,
+                                    Runtime::Loader& runtime) {
+  return std::make_unique<CsrfPolicy>(policy, runtime);
 }
 } // namespace
 
@@ -86,8 +90,7 @@ Http::FilterHeadersStatus CsrfFilter::decodeHeaders(Http::HeaderMap& headers, bo
     config_->stats().missing_source_origin_.inc();
   }
 
-  const absl::string_view target_origin = targetOriginValue(headers);
-  if (source_origin != target_origin) {
+  if (!isValid(source_origin, headers)) {
     is_valid = false;
     config_->stats().request_invalid_.inc();
   }
@@ -101,7 +104,8 @@ Http::FilterHeadersStatus CsrfFilter::decodeHeaders(Http::HeaderMap& headers, bo
     return Http::FilterHeadersStatus::Continue;
   }
 
-  callbacks_->sendLocalReply(Http::Code::Forbidden, "Invalid origin", nullptr, absl::nullopt);
+  callbacks_->sendLocalReply(Http::Code::Forbidden, "Invalid origin", nullptr, absl::nullopt,
+                             RcDetails::get().OriginMismatch);
   return Http::FilterHeadersStatus::StopIteration;
 }
 
@@ -114,6 +118,21 @@ void CsrfFilter::determinePolicy() {
   } else {
     policy_ = config_->policy();
   }
+}
+
+bool CsrfFilter::isValid(const absl::string_view source_origin, Http::HeaderMap& headers) {
+  const absl::string_view target_origin = targetOriginValue(headers);
+  if (source_origin == target_origin) {
+    return true;
+  }
+
+  for (const auto& additional_origin : policy_->additionalOrigins()) {
+    if (additional_origin->match(source_origin)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 } // namespace Csrf

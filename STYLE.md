@@ -39,9 +39,9 @@
 * 100 columns is the line limit.
 * Use your GitHub name in TODO comments, e.g. `TODO(foobar): blah`.
 * Smart pointers are type aliased:
-  * `typedef std::unique_ptr<Foo> FooPtr;`
-  * `typedef std::shared_ptr<Bar> BarSharedPtr;`
-  * `typedef std::shared_ptr<const Blah> BlahConstSharedPtr;`
+  * `using FooPtr = std::unique_ptr<Foo>;`
+  * `using BarSharedPtr = std::shared_ptr<Bar>;`
+  * `using BlahConstSharedPtr = std::shared_ptr<const Blah>;`
   * Regular pointers (e.g. `int* foo`) should not be type aliased.
 * If move semantics are intended, prefer specifying function arguments with `&&`.
   E.g., `void onHeaders(Http::HeaderMapPtr&& headers, ...)`. The rationale for this is that it
@@ -165,7 +165,7 @@ environment. In general, there should be no non-local network access. In additio
 
 * Paths should be constructed using:
   * The methods in [`TestEnvironment`](test/test_common/environment.h) for C++ tests.
-  * With `${TEST_TMPDIR}` (for writable temporary space) or `${TEST_RUNDIR}` for read-only access to
+  * With `${TEST_TMPDIR}` (for writable temporary space) or `${TEST_SRCDIR}` for read-only access to
     test inputs in shell tests.
   * With `{{ test_tmpdir }}`, `{{ test_rundir }}` and `{{ test_udsdir }}` respectively for JSON templates.
     `{{ test_udsdir }}` is provided for pathname based Unix Domain Sockets, which must fit within a

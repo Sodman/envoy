@@ -7,7 +7,7 @@
 namespace Envoy {
 namespace Upstream {
 
-typedef std::vector<std::pair<HostConstSharedPtr, double>> NormalizedHostWeightVector;
+using NormalizedHostWeightVector = std::vector<std::pair<HostConstSharedPtr, double>>;
 
 class ThreadAwareLoadBalancerBase : public LoadBalancerBase, public ThreadAwareLoadBalancer {
 public:
@@ -21,10 +21,10 @@ public:
    */
   class HashingLoadBalancer {
   public:
-    virtual ~HashingLoadBalancer() {}
+    virtual ~HashingLoadBalancer() = default;
     virtual HostConstSharedPtr chooseHost(uint64_t hash) const PURE;
   };
-  typedef std::shared_ptr<HashingLoadBalancer> HashingLoadBalancerSharedPtr;
+  using HashingLoadBalancerSharedPtr = std::shared_ptr<HashingLoadBalancer>;
 
   // Upstream::ThreadAwareLoadBalancer
   LoadBalancerFactorySharedPtr factory() override { return factory_; }
@@ -47,7 +47,7 @@ private:
     std::shared_ptr<HashingLoadBalancer> current_lb_;
     bool global_panic_{};
   };
-  typedef std::unique_ptr<PerPriorityState> PerPriorityStatePtr;
+  using PerPriorityStatePtr = std::unique_ptr<PerPriorityState>;
 
   struct LoadBalancerImpl : public LoadBalancer {
     LoadBalancerImpl(ClusterStats& stats, Runtime::RandomGenerator& random)
@@ -73,10 +73,10 @@ private:
     ClusterStats& stats_;
     Runtime::RandomGenerator& random_;
     absl::Mutex mutex_;
-    std::shared_ptr<std::vector<PerPriorityStatePtr>> per_priority_state_ GUARDED_BY(mutex_);
+    std::shared_ptr<std::vector<PerPriorityStatePtr>> per_priority_state_ ABSL_GUARDED_BY(mutex_);
     // This is split out of PerPriorityState so LoadBalancerBase::ChoosePriority can be reused.
-    std::shared_ptr<HealthyLoad> healthy_per_priority_load_ GUARDED_BY(mutex_);
-    std::shared_ptr<DegradedLoad> degraded_per_priority_load_ GUARDED_BY(mutex_);
+    std::shared_ptr<HealthyLoad> healthy_per_priority_load_ ABSL_GUARDED_BY(mutex_);
+    std::shared_ptr<DegradedLoad> degraded_per_priority_load_ ABSL_GUARDED_BY(mutex_);
   };
 
   virtual HashingLoadBalancerSharedPtr

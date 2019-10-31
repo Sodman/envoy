@@ -14,7 +14,7 @@ namespace HealthCheckers {
 namespace RedisHealthChecker {
 namespace {
 
-typedef Extensions::HealthCheckers::RedisHealthChecker::RedisHealthChecker CustomRedisHealthChecker;
+using CustomRedisHealthChecker = Extensions::HealthCheckers::RedisHealthChecker::RedisHealthChecker;
 
 TEST(HealthCheckerFactoryTest, CreateRedis) {
   const std::string yaml = R"EOF(
@@ -106,13 +106,14 @@ TEST(HealthCheckerFactoryTest, CreateRedisViaUpstreamHealthCheckerFactory) {
   Runtime::MockRandomGenerator random;
   Event::MockDispatcher dispatcher;
   AccessLog::MockAccessLogManager log_manager;
+  NiceMock<Api::MockApi> api;
 
-  EXPECT_CALL(dispatcher, clearDeferredDeleteList());
-  EXPECT_NE(nullptr, dynamic_cast<CustomRedisHealthChecker*>(
-                         Upstream::HealthCheckerFactory::create(
-                             Upstream::parseHealthCheckFromV2Yaml(yaml), cluster, runtime, random,
-                             dispatcher, log_manager)
-                             .get()));
+  EXPECT_NE(nullptr,
+            dynamic_cast<CustomRedisHealthChecker*>(
+                Upstream::HealthCheckerFactory::create(
+                    Upstream::parseHealthCheckFromV2Yaml(yaml), cluster, runtime, random,
+                    dispatcher, log_manager, ProtobufMessage::getStrictValidationVisitor(), api)
+                    .get()));
 }
 } // namespace
 } // namespace RedisHealthChecker

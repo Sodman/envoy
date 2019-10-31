@@ -2,12 +2,13 @@
 
 #include <functional>
 
-#include "envoy/config/xds_grpc_context.h"
+#include "envoy/config/grpc_mux.h"
 #include "envoy/grpc/async_client.h"
 
 #include "common/common/backoff_strategy.h"
 #include "common/common/token_bucket_impl.h"
 #include "common/config/utility.h"
+#include "common/grpc/typed_async_client.h"
 
 namespace Envoy {
 namespace Config {
@@ -16,10 +17,10 @@ namespace Config {
 // xDS variants). Reestablishes the gRPC channel when necessary, and provides rate limiting of
 // requests.
 template <class RequestProto, class ResponseProto>
-class GrpcStream : public Grpc::TypedAsyncStreamCallbacks<ResponseProto>,
+class GrpcStream : public Grpc::AsyncStreamCallbacks<ResponseProto>,
                    public Logger::Loggable<Logger::Id::config> {
 public:
-  GrpcStream(GrpcStreamCallbacks<ResponseProto>* callbacks, Grpc::AsyncClientPtr async_client,
+  GrpcStream(GrpcStreamCallbacks<ResponseProto>* callbacks, Grpc::RawAsyncClientPtr async_client,
              const Protobuf::MethodDescriptor& service_method, Runtime::RandomGenerator& random,
              Event::Dispatcher& dispatcher, Stats::Scope& scope,
              const RateLimitSettings& rate_limit_settings)
@@ -34,8 +35,12 @@ public:
           rate_limit_settings.max_tokens_, time_source_, rate_limit_settings.fill_rate_);
       drain_request_timer_ = dispatcher.createTimer([this]() { callbacks_->onWriteable(); });
     }
-    backoff_strategy_ = std::make_unique<JitteredBackOffStrategy>(RETRY_INITIAL_DELAY_MS,
-                                                                  RETRY_MAX_DELAY_MS, random_);
+
+    // TODO(htuch): Make this configurable.
+    static constexpr uint32_t RetryInitialDelayMs = 500;
+    static constexpr uint32_t RetryMaxDelayMs = 30000; // Do not cross more than 30s
+    backoff_strategy_ =
+        std::make_unique<JitteredBackOffStrategy>(RetryInitialDelayMs, RetryMaxDelayMs, random_);
   }
 
   void establishNewStream() {
@@ -44,7 +49,7 @@ public:
       ENVOY_LOG(warn, "gRPC bidi stream for {} already exists!", service_method_.DebugString());
       return;
     }
-    stream_ = async_client_->start(service_method_, *this);
+    stream_ = async_client_->start(service_method_, *this, Http::AsyncClient::StreamOptions());
     if (stream_ == nullptr) {
       ENVOY_LOG(warn, "Unable to establish new stream");
       callbacks_->onEstablishmentFailure();
@@ -127,12 +132,8 @@ private:
 
   GrpcStreamCallbacks<ResponseProto>* const callbacks_;
 
-  // TODO(htuch): Make this configurable or some static.
-  const uint32_t RETRY_INITIAL_DELAY_MS = 500;
-  const uint32_t RETRY_MAX_DELAY_MS = 30000; // Do not cross more than 30s
-
-  Grpc::AsyncClientPtr async_client_;
-  Grpc::AsyncStream* stream_{};
+  Grpc::AsyncClient<RequestProto, ResponseProto> async_client_;
+  Grpc::AsyncStream<RequestProto> stream_{};
   const Protobuf::MethodDescriptor& service_method_;
   ControlPlaneStats control_plane_stats_;
 

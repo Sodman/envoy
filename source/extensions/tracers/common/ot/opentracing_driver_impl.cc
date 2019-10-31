@@ -39,9 +39,8 @@ public:
   explicit OpenTracingHTTPHeadersReader(const Http::HeaderMap& request_headers)
       : request_headers_(request_headers) {}
 
-  typedef std::function<opentracing::expected<void>(opentracing::string_view,
-                                                    opentracing::string_view)>
-      OpenTracingCb;
+  using OpenTracingCb = std::function<opentracing::expected<void>(opentracing::string_view,
+                                                                  opentracing::string_view)>;
 
   // opentracing::HTTPHeadersReader
   opentracing::expected<opentracing::string_view>
@@ -71,7 +70,7 @@ private:
 
   static Http::HeaderMap::Iterate headerMapCallback(const Http::HeaderEntry& header,
                                                     void* context) {
-    OpenTracingCb* callback = static_cast<OpenTracingCb*>(context);
+    auto* callback = static_cast<OpenTracingCb*>(context);
     opentracing::string_view key{header.key().getStringView().data(),
                                  header.key().getStringView().length()};
     opentracing::string_view value{header.value().getStringView().data(),
@@ -91,12 +90,13 @@ OpenTracingSpan::OpenTracingSpan(OpenTracingDriver& driver,
 
 void OpenTracingSpan::finishSpan() { span_->FinishWithOptions(finish_options_); }
 
-void OpenTracingSpan::setOperation(const std::string& operation) {
-  span_->SetOperationName(operation);
+void OpenTracingSpan::setOperation(absl::string_view operation) {
+  span_->SetOperationName({operation.data(), operation.length()});
 }
 
-void OpenTracingSpan::setTag(const std::string& name, const std::string& value) {
-  span_->SetTag(name, value);
+void OpenTracingSpan::setTag(absl::string_view name, absl::string_view value) {
+  span_->SetTag({name.data(), name.length()},
+                opentracing::v2::string_view{value.data(), value.length()});
 }
 
 void OpenTracingSpan::log(SystemTime timestamp, const std::string& event) {

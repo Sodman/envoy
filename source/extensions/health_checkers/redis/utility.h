@@ -14,12 +14,14 @@ namespace RedisHealthChecker {
 namespace {
 
 static const envoy::config::health_checker::redis::v2::Redis
-getRedisHealthCheckConfig(const envoy::api::v2::core::HealthCheck& health_check_config) {
+getRedisHealthCheckConfig(const envoy::api::v2::core::HealthCheck& health_check_config,
+                          ProtobufMessage::ValidationVisitor& validation_visitor) {
   ProtobufTypes::MessagePtr config =
       ProtobufTypes::MessagePtr{new envoy::config::health_checker::redis::v2::Redis()};
-  MessageUtil::jsonConvert(health_check_config.custom_health_check().config(), *config);
+  MessageUtil::jsonConvert(health_check_config.custom_health_check().config(), validation_visitor,
+                           *config);
   return MessageUtil::downcastAndValidate<const envoy::config::health_checker::redis::v2::Redis&>(
-      *config);
+      *config, validation_visitor);
 }
 
 } // namespace

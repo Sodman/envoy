@@ -3,11 +3,12 @@
 #include <memory>
 #include <string>
 
+#include "envoy/config/filter/accesslog/v2/accesslog.pb.validate.h"
 #include "envoy/upstream/cluster_manager.h"
 #include "envoy/upstream/upstream.h"
 
 #include "common/access_log/access_log_impl.h"
-#include "common/config/filter_json.h"
+#include "common/protobuf/message_validator_impl.h"
 #include "common/runtime/runtime_impl.h"
 #include "common/runtime/uuid_util.h"
 
@@ -34,17 +35,9 @@ namespace Envoy {
 namespace AccessLog {
 namespace {
 
-envoy::config::filter::accesslog::v2::AccessLog
-parseAccessLogFromJson(const std::string& json_string) {
-  envoy::config::filter::accesslog::v2::AccessLog access_log;
-  auto json_object_ptr = Json::Factory::loadFromString(json_string);
-  Config::FilterJson::translateAccessLog(*json_object_ptr, access_log);
-  return access_log;
-}
-
 envoy::config::filter::accesslog::v2::AccessLog parseAccessLogFromV2Yaml(const std::string& yaml) {
   envoy::config::filter::accesslog::v2::AccessLog access_log;
-  MessageUtil::loadFromYaml(yaml, access_log);
+  TestUtility::loadFromYamlAndValidate(yaml, access_log);
   return access_log;
 }
 
@@ -70,13 +63,14 @@ public:
 };
 
 TEST_F(AccessLogImplTest, LogMoreData) {
-  const std::string json = R"EOF(
-  {
-    "path": "/dev/null"
-  }
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
   )EOF";
 
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
 
   EXPECT_CALL(*file_, write(_));
   stream_info_.response_flags_ = StreamInfo::ResponseFlag::UpstreamConnectionFailure;
@@ -92,17 +86,18 @@ TEST_F(AccessLogImplTest, LogMoreData) {
 }
 
 TEST_F(AccessLogImplTest, DownstreamDisconnect) {
-  const std::string json = R"EOF(
-      {
-        "path": "/dev/null"
-      }
-      )EOF";
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
+  )EOF";
 
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
 
   EXPECT_CALL(*file_, write(_));
 
-  std::shared_ptr<Upstream::MockClusterInfo> cluster{new Upstream::MockClusterInfo()};
+  auto cluster = std::make_shared<NiceMock<Upstream::MockClusterInfo>>();
   stream_info_.upstream_host_ = Upstream::makeTestHostDescription(cluster, "tcp://10.0.0.5:1234");
   stream_info_.response_flags_ = StreamInfo::ResponseFlag::DownstreamConnectionTermination;
 
@@ -112,14 +107,42 @@ TEST_F(AccessLogImplTest, DownstreamDisconnect) {
             output_);
 }
 
-TEST_F(AccessLogImplTest, EnvoyUpstreamServiceTime) {
-  const std::string json = R"EOF(
-  {
-    "path": "/dev/null"
-  }
+TEST_F(AccessLogImplTest, RouteName) {
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
+  format: "[%START_TIME%] \"%REQ(:METHOD)% %REQ(X-ENVOY-ORIGINAL-PATH?:PATH):256% %PROTOCOL%\" %RESPONSE_CODE% %RESPONSE_FLAGS% %ROUTE_NAME% %BYTES_RECEIVED% %BYTES_SENT% %DURATION% %RESP(X-ENVOY-UPSTREAM-SERVICE-TIME)% \"%REQ(X-FORWARDED-FOR)%\" \"%REQ(USER-AGENT)%\" \"%REQ(X-REQUEST-ID)%\"  \"%REQ(:AUTHORITY)%\"\n"
   )EOF";
 
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
+
+  EXPECT_CALL(*file_, write(_));
+  stream_info_.route_name_ = "route-test-name";
+  stream_info_.response_flags_ = StreamInfo::ResponseFlag::UpstreamConnectionFailure;
+  request_headers_.addCopy(Http::Headers::get().UserAgent, "user-agent-set");
+  request_headers_.addCopy(Http::Headers::get().RequestId, "id");
+  request_headers_.addCopy(Http::Headers::get().Host, "host");
+  request_headers_.addCopy(Http::Headers::get().ForwardedFor, "x.x.x.x");
+
+  log->log(&request_headers_, &response_headers_, &response_trailers_, stream_info_);
+
+  EXPECT_EQ(
+      "[1999-01-01T00:00:00.000Z] \"GET / HTTP/1.1\" 0 UF route-test-name 1 2 3 - \"x.x.x.x\" "
+      "\"user-agent-set\" \"id\"  \"host\"\n",
+      output_);
+}
+
+TEST_F(AccessLogImplTest, EnvoyUpstreamServiceTime) {
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
+  )EOF";
+
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
 
   EXPECT_CALL(*file_, write(_));
   response_headers_.addCopy(Http::Headers::get().EnvoyUpstreamServiceTime, "999");
@@ -131,13 +154,14 @@ TEST_F(AccessLogImplTest, EnvoyUpstreamServiceTime) {
 }
 
 TEST_F(AccessLogImplTest, NoFilter) {
-  const std::string json = R"EOF(
-    {
-      "path": "/dev/null"
-    }
-    )EOF";
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
+  )EOF";
 
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
 
   EXPECT_CALL(*file_, write(_));
   log->log(&request_headers_, &response_headers_, &response_trailers_, stream_info_);
@@ -147,16 +171,17 @@ TEST_F(AccessLogImplTest, NoFilter) {
 }
 
 TEST_F(AccessLogImplTest, UpstreamHost) {
-  std::shared_ptr<Upstream::MockClusterInfo> cluster{new Upstream::MockClusterInfo()};
+  auto cluster = std::make_shared<NiceMock<Upstream::MockClusterInfo>>();
   stream_info_.upstream_host_ = Upstream::makeTestHostDescription(cluster, "tcp://10.0.0.5:1234");
 
-  const std::string json = R"EOF(
-      {
-        "path": "/dev/null"
-      }
-      )EOF";
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
+  )EOF";
 
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
 
   EXPECT_CALL(*file_, write(_));
   log->log(&request_headers_, &response_headers_, &response_trailers_, stream_info_);
@@ -166,18 +191,29 @@ TEST_F(AccessLogImplTest, UpstreamHost) {
 }
 
 TEST_F(AccessLogImplTest, WithFilterMiss) {
-  const std::string json = R"EOF(
-  {
-    "path": "/dev/null",
-    "filter": {"type":"logical_or", "filters": [
-        {"type": "status_code", "op": ">=", "value": 500},
-        {"type": "duration", "op": ">=", "value": 1000000}
-      ]
-    }
-  }
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+  or_filter:
+    filters:
+    - status_code_filter:
+        comparison:
+          op: GE
+          value:
+            default_value: 500
+            runtime_key: key_a
+    - duration_filter:
+        comparison:
+          op: GE
+          value:
+            default_value: 1000000
+            runtime_key: key_b
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
   )EOF";
 
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
 
   EXPECT_CALL(*file_, write(_)).Times(0);
   log->log(&request_headers_, &response_headers_, &response_trailers_, stream_info_);
@@ -187,19 +223,35 @@ TEST_F(AccessLogImplTest, WithFilterMiss) {
 }
 
 TEST_F(AccessLogImplTest, WithFilterHit) {
-  const std::string json = R"EOF(
-  {
-    "path": "/dev/null",
-    "filter": {"type": "logical_or", "filters": [
-        {"type": "status_code", "op": ">=", "value": 500},
-        {"type": "status_code", "op": "=", "value": 0},
-        {"type": "duration", "op": ">=", "value": 1000000}
-      ]
-    }
-  }
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+    or_filter:
+      filters:
+      - status_code_filter:
+          comparison:
+            op: GE
+            value:
+              default_value: 500
+              runtime_key: key_a
+      - status_code_filter:
+          comparison:
+            op: EQ
+            value:
+              default_value: 0
+              runtime_key: key_b
+      - duration_filter:
+          comparison:
+            op: GE
+            value:
+              default_value: 1000000
+              runtime_key: key_c
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
   )EOF";
 
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
 
   EXPECT_CALL(*file_, write(_)).Times(3);
   log->log(&request_headers_, &response_headers_, &response_trailers_, stream_info_);
@@ -214,14 +266,17 @@ TEST_F(AccessLogImplTest, WithFilterHit) {
 }
 
 TEST_F(AccessLogImplTest, RuntimeFilter) {
-  const std::string json = R"EOF(
-  {
-    "path": "/dev/null",
-    "filter": {"type": "runtime", "key": "access_log.test_key"}
-  }
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+  runtime_filter:
+    runtime_key: access_log.test_key
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
   )EOF";
 
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
 
   // Value is taken from random generator.
   EXPECT_CALL(context_.random_, random()).WillOnce(Return(42));
@@ -258,7 +313,8 @@ filter:
     percent_sampled:
       numerator: 5
       denominator: TEN_THOUSAND
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -300,7 +356,8 @@ filter:
       numerator: 5
       denominator: MILLION
     use_independent_randomness: true
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -324,14 +381,14 @@ config:
 TEST_F(AccessLogImplTest, PathRewrite) {
   request_headers_ = {{":method", "GET"}, {":path", "/foo"}, {"x-envoy-original-path", "/bar"}};
 
-  const std::string json = R"EOF(
-      {
-        "path": "/dev/null"
-      }
-      )EOF";
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
+  )EOF";
 
-  Json::ObjectSharedPtr loader = Json::Factory::loadFromString(json);
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
 
   EXPECT_CALL(*file_, write(_));
   log->log(&request_headers_, &response_headers_, &response_trailers_, stream_info_);
@@ -340,15 +397,17 @@ TEST_F(AccessLogImplTest, PathRewrite) {
             output_);
 }
 
-TEST_F(AccessLogImplTest, healthCheckTrue) {
-  const std::string json = R"EOF(
-  {
-    "path": "/dev/null",
-    "filter": {"type": "not_healthcheck"}
-  }
+TEST_F(AccessLogImplTest, HealthCheckTrue) {
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+  not_health_check_filter: {}
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
   )EOF";
 
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
 
   Http::TestHeaderMapImpl header_map{};
   stream_info_.health_check_request_ = true;
@@ -357,15 +416,17 @@ TEST_F(AccessLogImplTest, healthCheckTrue) {
   log->log(&header_map, &response_headers_, &response_trailers_, stream_info_);
 }
 
-TEST_F(AccessLogImplTest, healthCheckFalse) {
-  const std::string json = R"EOF(
-  {
-    "path": "/dev/null",
-    "filter": {"type": "not_healthcheck"}
-  }
+TEST_F(AccessLogImplTest, HealthCheckFalse) {
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+  not_health_check_filter: {}
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: "/dev/null"
   )EOF";
 
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
 
   Http::TestHeaderMapImpl header_map{};
   EXPECT_CALL(*file_, write(_));
@@ -373,7 +434,7 @@ TEST_F(AccessLogImplTest, healthCheckFalse) {
   log->log(&request_headers_, &response_headers_, &response_trailers_, stream_info_);
 }
 
-TEST_F(AccessLogImplTest, requestTracing) {
+TEST_F(AccessLogImplTest, RequestTracing) {
   Runtime::RandomGeneratorImpl random;
   std::string not_traceable_guid = random.uuid();
 
@@ -383,14 +444,16 @@ TEST_F(AccessLogImplTest, requestTracing) {
   std::string sample_tracing_guid = random.uuid();
   UuidUtils::setTraceableUuid(sample_tracing_guid, UuidTraceStatus::Sampled);
 
-  const std::string json = R"EOF(
-  {
-    "path": "/dev/null",
-    "filter": {"type": "traceable_request"}
-  }
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+  traceable_filter: {}
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
   )EOF";
 
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
 
   {
     Http::TestHeaderMapImpl forced_header{{"x-request-id", force_tracing_guid}};
@@ -415,43 +478,53 @@ TEST(AccessLogImplTestCtor, FiltersMissingInOrAndFilter) {
   NiceMock<Server::Configuration::MockFactoryContext> context;
 
   {
-    const std::string json = R"EOF(
-      {
-        "path": "/dev/null",
-        "filter": {"type": "logical_or"}
-      }
+    const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+  or_filter: {}
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
     )EOF";
 
-    EXPECT_THROW(AccessLogFactory::fromProto(parseAccessLogFromJson(json), context),
+    EXPECT_THROW(AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context),
                  EnvoyException);
   }
 
   {
-    const std::string json = R"EOF(
-      {
-        "path": "/dev/null",
-        "filter": {"type": "logical_and"}
-      }
+    const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+  and_filter: {}
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
     )EOF";
 
-    EXPECT_THROW(AccessLogFactory::fromProto(parseAccessLogFromJson(json), context),
+    EXPECT_THROW(AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context),
                  EnvoyException);
   }
 }
 
-TEST_F(AccessLogImplTest, andFilter) {
-  const std::string json = R"EOF(
-  {
-    "path": "/dev/null",
-    "filter": {"type": "logical_and", "filters": [
-        {"type": "status_code", "op": ">=", "value": 500},
-        {"type": "not_healthcheck"}
-      ]
-    }
-  }
+TEST_F(AccessLogImplTest, AndFilter) {
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+  and_filter:
+    filters:
+      - status_code_filter:
+          comparison:
+            op: GE
+            value:
+              default_value: 500
+              runtime_key: key
+      - not_health_check_filter: {}
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
   )EOF";
 
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
   stream_info_.response_code_ = 500;
 
   {
@@ -469,19 +542,25 @@ TEST_F(AccessLogImplTest, andFilter) {
   }
 }
 
-TEST_F(AccessLogImplTest, orFilter) {
-  const std::string json = R"EOF(
-  {
-    "path": "/dev/null",
-    "filter": {"type": "logical_or", "filters": [
-        {"type": "status_code", "op": ">=", "value": 500},
-        {"type": "not_healthcheck"}
-      ]
-    }
-  }
+TEST_F(AccessLogImplTest, OrFilter) {
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+  or_filter:
+    filters:
+    - status_code_filter:
+        comparison:
+          op: GE
+          value:
+            default_value: 500
+            runtime_key: key
+    - not_health_check_filter: {}
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
   )EOF";
 
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
   stream_info_.response_code_ = 500;
 
   {
@@ -498,23 +577,33 @@ TEST_F(AccessLogImplTest, orFilter) {
   }
 }
 
-TEST_F(AccessLogImplTest, multipleOperators) {
-  const std::string json = R"EOF(
-  {
-    "path": "/dev/null",
-    "filter": {"type": "logical_and", "filters": [
-        {"type": "logical_or", "filters": [
-            {"type": "duration", "op": ">=", "value": 10000},
-            {"type": "status_code", "op": ">=", "value": 500}
-          ]
-        },
-        {"type": "not_healthcheck"}
-      ]
-    }
-  }
+TEST_F(AccessLogImplTest, MultipleOperators) {
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+  and_filter:
+    filters:
+    - or_filter:
+        filters:
+        - duration_filter:
+            comparison:
+              op: GE
+              value:
+                default_value: 10000
+                runtime_key: key_a
+        - status_code_filter:
+            comparison:
+              op: GE
+              value:
+                default_value: 500
+                runtime_key: key_b
+    - not_health_check_filter: {}
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
   )EOF";
 
-  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromJson(json), context_);
+  InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
   stream_info_.response_code_ = 500;
 
   {
@@ -534,18 +623,19 @@ TEST_F(AccessLogImplTest, multipleOperators) {
 }
 
 TEST(AccessLogFilterTest, DurationWithRuntimeKey) {
-  std::string filter_json = R"EOF(
-    {
-      "filter": {"type": "duration", "op": ">=", "value": 1000000, "runtime_key": "key"}
-    }
+  const std::string filter_yaml = R"EOF(
+duration_filter:
+  comparison:
+    op: GE
+    value:
+      default_value: 1000000
+      runtime_key: key
     )EOF";
 
-  Json::ObjectSharedPtr loader = Json::Factory::loadFromString(filter_json);
   NiceMock<Runtime::MockLoader> runtime;
 
-  Json::ObjectSharedPtr filter_object = loader->getObject("filter");
   envoy::config::filter::accesslog::v2::AccessLogFilter config;
-  Config::FilterJson::translateAccessLogFilter(*filter_object, config);
+  TestUtility::loadFromYaml(filter_yaml, config);
   DurationFilter filter(config.duration_filter(), runtime);
   Http::TestHeaderMapImpl request_headers{{":method", "GET"}, {":path", "/"}};
   Http::TestHeaderMapImpl response_headers;
@@ -570,18 +660,19 @@ TEST(AccessLogFilterTest, DurationWithRuntimeKey) {
 }
 
 TEST(AccessLogFilterTest, StatusCodeWithRuntimeKey) {
-  std::string filter_json = R"EOF(
-    {
-      "filter": {"type": "status_code", "op": ">=", "value": 300, "runtime_key": "key"}
-    }
+  const std::string filter_yaml = R"EOF(
+status_code_filter:
+  comparison:
+    op: GE
+    value:
+      default_value: 300
+      runtime_key: key
     )EOF";
 
-  Json::ObjectSharedPtr loader = Json::Factory::loadFromString(filter_json);
   NiceMock<Runtime::MockLoader> runtime;
 
-  Json::ObjectSharedPtr filter_object = loader->getObject("filter");
   envoy::config::filter::accesslog::v2::AccessLogFilter config;
-  Config::FilterJson::translateAccessLogFilter(*filter_object, config);
+  TestUtility::loadFromYaml(filter_yaml, config);
   StatusCodeFilter filter(config.status_code_filter(), runtime);
 
   Http::TestHeaderMapImpl request_headers{{":method", "GET"}, {":path", "/"}};
@@ -607,7 +698,8 @@ filter:
       value:
         default_value: 499
         runtime_key: hello
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -631,7 +723,8 @@ filter:
   header_filter:
     header:
       name: test-header
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -654,7 +747,8 @@ filter:
       name: test-header
       exact_match: exact-match-value
 
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -680,8 +774,11 @@ filter:
   header_filter:
     header:
       name: test-header
-      regex_match: \d{3}
-config:
+      safe_regex_match:
+        google_re2: {}
+        regex: "\\d{3}"
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -715,7 +812,8 @@ filter:
       range_match:
         start: -10
         end: 0
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -754,7 +852,8 @@ TEST_F(AccessLogImplTest, ResponseFlagFilterAnyFlag) {
 name: envoy.file_access_log
 filter:
   response_flag_filter: {}
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -775,7 +874,8 @@ filter:
   response_flag_filter:
     flags:
       - UO
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -801,7 +901,8 @@ filter:
     flags:
       - UO
       - RL
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -842,14 +943,17 @@ filter:
       - DC
       - URX
       - SI
-config:
+      - IH
+      - DPE      
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
-  static_assert(StreamInfo::ResponseFlag::LastFlag == 0x10000,
+  static_assert(StreamInfo::ResponseFlag::LastFlag == 0x40000,
                 "A flag has been added. Fix this code.");
 
-  std::vector<StreamInfo::ResponseFlag> all_response_flags = {
+  const std::vector<StreamInfo::ResponseFlag> all_response_flags = {
       StreamInfo::ResponseFlag::FailedLocalHealthCheck,
       StreamInfo::ResponseFlag::NoHealthyUpstream,
       StreamInfo::ResponseFlag::UpstreamRequestTimeout,
@@ -867,6 +971,8 @@ config:
       StreamInfo::ResponseFlag::DownstreamConnectionTermination,
       StreamInfo::ResponseFlag::UpstreamRetryLimitExceeded,
       StreamInfo::ResponseFlag::StreamIdleTimeout,
+      StreamInfo::ResponseFlag::InvalidEnvoyRequestHeaders,
+      StreamInfo::ResponseFlag::DownstreamProtocolError,
   };
 
   InstanceSharedPtr log = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
@@ -886,19 +992,23 @@ filter:
   response_flag_filter:
     flags:
       - UnsupportedFlag
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
   EXPECT_THROW_WITH_MESSAGE(
       AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_),
       ProtoValidationException,
-      "Proto constraint validation failed (AccessLogFilterValidationError.ResponseFlagFilter: "
+      "Proto constraint validation failed (AccessLogValidationError.Filter: [\"embedded message "
+      "failed validation\"] | caused by AccessLogFilterValidationError.ResponseFlagFilter: "
       "[\"embedded message failed validation\"] | caused by "
       "ResponseFlagFilterValidationError.Flags[i]: [\"value must be in list \" [\"LH\" \"UH\" "
       "\"UT\" \"LR\" \"UR\" \"UF\" \"UC\" \"UO\" \"NR\" \"DI\" \"FI\" \"RL\" \"UAEX\" \"RLSE\" "
-      "\"DC\" \"URX\" \"SI\"]]): "
-      "response_flag_filter {\n  flags: \"UnsupportedFlag\"\n}\n");
+      "\"DC\" \"URX\" \"SI\" \"IH\" \"DPE\"]]): name: \"envoy.file_access_log\"\nfilter {\n  "
+      "response_flag_filter {\n    flags: \"UnsupportedFlag\"\n  }\n}\ntyped_config {\n  "
+      "[type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog] {\n    path: \"/dev/null\"\n  "
+      "}\n}\n");
 }
 
 TEST_F(AccessLogImplTest, ValidateTypedConfig) {
@@ -916,12 +1026,15 @@ typed_config:
   EXPECT_THROW_WITH_MESSAGE(
       AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_),
       ProtoValidationException,
-      "Proto constraint validation failed (AccessLogFilterValidationError.ResponseFlagFilter: "
+      "Proto constraint validation failed (AccessLogValidationError.Filter: [\"embedded message "
+      "failed validation\"] | caused by AccessLogFilterValidationError.ResponseFlagFilter: "
       "[\"embedded message failed validation\"] | caused by "
       "ResponseFlagFilterValidationError.Flags[i]: [\"value must be in list \" [\"LH\" \"UH\" "
       "\"UT\" \"LR\" \"UR\" \"UF\" \"UC\" \"UO\" \"NR\" \"DI\" \"FI\" \"RL\" \"UAEX\" \"RLSE\" "
-      "\"DC\" \"URX\" \"SI\"]]): "
-      "response_flag_filter {\n  flags: \"UnsupportedFlag\"\n}\n");
+      "\"DC\" \"URX\" \"SI\" \"IH\" \"DPE\"]]): name: \"envoy.file_access_log\"\nfilter {\n  "
+      "response_flag_filter {\n    flags: \"UnsupportedFlag\"\n  }\n}\ntyped_config {\n  "
+      "[type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog] {\n    path: \"/dev/null\"\n  "
+      "}\n}\n");
 }
 
 TEST_F(AccessLogImplTest, GrpcStatusFilterValues) {
@@ -931,7 +1044,8 @@ filter:
   grpc_status_filter:
     statuses:
       - {}
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
 )EOF";
 
@@ -961,7 +1075,8 @@ filter:
   grpc_status_filter:
     statuses:
       - NOT_A_VALID_CODE
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -976,7 +1091,8 @@ filter:
   grpc_status_filter:
     statuses:
       - OK
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -996,7 +1112,8 @@ filter:
   grpc_status_filter:
     statuses:
       - {}
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
 )EOF";
 
@@ -1027,7 +1144,8 @@ filter:
   grpc_status_filter:
     statuses:
       - UNKNOWN
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -1046,7 +1164,8 @@ filter:
     exclude: true
     statuses:
       - OK
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -1070,7 +1189,8 @@ filter:
     exclude: false
     statuses:
       - OK
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -1090,7 +1210,8 @@ filter:
   grpc_status_filter:
     statuses:
       - OK
-config:
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
   path: /dev/null
   )EOF";
 
@@ -1101,6 +1222,161 @@ config:
 
   response_headers_.addCopy(Http::Headers::get().GrpcStatus, "0");
   log->log(&request_headers_, &response_headers_, &response_trailers_, stream_info_);
+}
+
+class TestHeaderFilterFactory : public ExtensionFilterFactory {
+public:
+  ~TestHeaderFilterFactory() override = default;
+
+  FilterPtr createFilter(const envoy::config::filter::accesslog::v2::ExtensionFilter& config,
+                         Runtime::Loader&, Runtime::RandomGenerator&) override {
+    auto factory_config = Config::Utility::translateToFactoryConfig(
+        config, Envoy::ProtobufMessage::getNullValidationVisitor(), *this);
+    const auto& header_config =
+        TestUtility::downcastAndValidate<const envoy::config::filter::accesslog::v2::HeaderFilter&>(
+            *factory_config);
+    return std::make_unique<HeaderFilter>(header_config);
+  }
+
+  ProtobufTypes::MessagePtr createEmptyConfigProto() override {
+    return std::make_unique<envoy::config::filter::accesslog::v2::HeaderFilter>();
+  }
+
+  std::string name() const override { return "test_header_filter"; }
+};
+
+TEST_F(AccessLogImplTest, TestHeaderFilterPresence) {
+  Registry::RegisterFactory<TestHeaderFilterFactory, ExtensionFilterFactory> registered;
+
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+  extension_filter:
+    name: test_header_filter
+    config:
+      header:
+        name: test-header
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
+  )EOF";
+
+  InstanceSharedPtr logger = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
+
+  EXPECT_CALL(*file_, write(_)).Times(0);
+  logger->log(&request_headers_, &response_headers_, &response_trailers_, stream_info_);
+
+  request_headers_.addCopy("test-header", "foo/bar");
+  EXPECT_CALL(*file_, write(_));
+  logger->log(&request_headers_, &response_headers_, &response_trailers_, stream_info_);
+}
+
+/**
+ * Sample extension filter which allows every sample_rate-th request.
+ */
+class SampleExtensionFilter : public Filter {
+public:
+  SampleExtensionFilter(uint32_t sample_rate) : sample_rate_(sample_rate) {}
+
+  // AccessLog::Filter
+  bool evaluate(const StreamInfo::StreamInfo&, const Http::HeaderMap&, const Http::HeaderMap&,
+                const Http::HeaderMap&) override {
+    if (current_++ == 0) {
+      return true;
+    }
+    if (current_ >= sample_rate_) {
+      current_ = 0;
+    }
+    return false;
+  }
+
+private:
+  uint32_t current_ = 0;
+  uint32_t sample_rate_;
+};
+
+/**
+ * Sample extension filter factory which creates SampleExtensionFilter.
+ */
+class SampleExtensionFilterFactory : public ExtensionFilterFactory {
+public:
+  ~SampleExtensionFilterFactory() override = default;
+
+  FilterPtr createFilter(const envoy::config::filter::accesslog::v2::ExtensionFilter& config,
+                         Runtime::Loader&, Runtime::RandomGenerator&) override {
+    auto factory_config = Config::Utility::translateToFactoryConfig(
+        config, Envoy::ProtobufMessage::getNullValidationVisitor(), *this);
+    const Json::ObjectSharedPtr filter_config =
+        MessageUtil::getJsonObjectFromMessage(*factory_config);
+    return std::make_unique<SampleExtensionFilter>(filter_config->getInteger("rate"));
+  }
+
+  ProtobufTypes::MessagePtr createEmptyConfigProto() override {
+    return std::make_unique<ProtobufWkt::Struct>();
+  }
+
+  std::string name() const override { return "sample_extension_filter"; }
+};
+
+TEST_F(AccessLogImplTest, SampleExtensionFilter) {
+  Registry::RegisterFactory<SampleExtensionFilterFactory, ExtensionFilterFactory> registered;
+
+  const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+  extension_filter:
+    name: sample_extension_filter
+    config:
+      rate: 5
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
+  )EOF";
+
+  InstanceSharedPtr logger = AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_);
+  // For rate=5 expect 1st request to be recorded, 2nd-5th skipped, and 6th recorded.
+  EXPECT_CALL(*file_, write(_));
+  logger->log(&request_headers_, &response_headers_, &response_trailers_, stream_info_);
+  for (int i = 0; i <= 3; ++i) {
+    EXPECT_CALL(*file_, write(_)).Times(0);
+    logger->log(&request_headers_, &response_headers_, &response_trailers_, stream_info_);
+  }
+  EXPECT_CALL(*file_, write(_));
+  logger->log(&request_headers_, &response_headers_, &response_trailers_, stream_info_);
+}
+
+TEST_F(AccessLogImplTest, UnregisteredExtensionFilter) {
+  {
+    const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+  extension_filter:
+    name: unregistered_extension_filter
+    config:
+      foo: bar
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
+  )EOF";
+
+    EXPECT_THROW(AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_),
+                 EnvoyException);
+  }
+
+  {
+    const std::string yaml = R"EOF(
+name: envoy.file_access_log
+filter:
+  extension_filter:
+    name: bar
+typed_config:
+  "@type": type.googleapis.com/envoy.config.accesslog.v2.FileAccessLog
+  path: /dev/null
+    )EOF";
+
+    EXPECT_THROW(AccessLogFactory::fromProto(parseAccessLogFromV2Yaml(yaml), context_),
+                 EnvoyException);
+  }
 }
 
 } // namespace

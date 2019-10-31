@@ -16,7 +16,7 @@ namespace Network {
 
 class SocketImpl : public virtual Socket {
 public:
-  ~SocketImpl() { close(); }
+  ~SocketImpl() override { close(); }
 
   // Network::Socket
   const Address::InstanceConstSharedPtr& localAddress() const override { return local_address_; }
@@ -31,6 +31,7 @@ public:
       io_handle_->close();
     }
   }
+  bool isOpen() const override { return io_handle_->isOpen(); }
   void ensureOptions() {
     if (!options_) {
       options_ = std::make_shared<std::vector<OptionConstSharedPtr>>();
@@ -50,7 +51,7 @@ protected:
   SocketImpl(IoHandlePtr&& io_handle, const Address::InstanceConstSharedPtr& local_address)
       : io_handle_(std::move(io_handle)), local_address_(local_address) {}
 
-  IoHandlePtr io_handle_;
+  const IoHandlePtr io_handle_;
   Address::InstanceConstSharedPtr local_address_;
   OptionsSharedPtr options_;
 };
@@ -103,10 +104,10 @@ protected:
 };
 
 using TcpListenSocket = NetworkListenSocket<NetworkSocketTrait<Address::SocketType::Stream>>;
-typedef std::unique_ptr<TcpListenSocket> TcpListenSocketPtr;
+using TcpListenSocketPtr = std::unique_ptr<TcpListenSocket>;
 
 using UdpListenSocket = NetworkListenSocket<NetworkSocketTrait<Address::SocketType::Datagram>>;
-typedef std::unique_ptr<UdpListenSocket> UdpListenSocketPtr;
+using UdpListenSocketPtr = std::unique_ptr<UdpListenSocket>;
 
 class UdsListenSocket : public ListenSocketImpl {
 public:

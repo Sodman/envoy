@@ -16,6 +16,7 @@
 #include "common/runtime/uuid_util.h"
 #include "common/tracing/http_tracer_impl.h"
 
+#include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 
 namespace Envoy {
@@ -30,7 +31,7 @@ std::string ConnectionManagerUtility::determineNextProtocol(Network::Connection&
   // See if the data we have so far shows the HTTP/2 prefix. We ignore the case where someone sends
   // us the first few bytes of the HTTP/2 prefix since in all public cases we use SSL/ALPN. For
   // internal cases this should practically never happen.
-  if (-1 != data.search(Http2::CLIENT_MAGIC_PREFIX.c_str(), Http2::CLIENT_MAGIC_PREFIX.size(), 0)) {
+  if (data.startsWith(Http2::CLIENT_MAGIC_PREFIX)) {
     return Http2::ALPN_STRING;
   }
 
@@ -40,19 +41,22 @@ std::string ConnectionManagerUtility::determineNextProtocol(Network::Connection&
 ServerConnectionPtr ConnectionManagerUtility::autoCreateCodec(
     Network::Connection& connection, const Buffer::Instance& data,
     ServerConnectionCallbacks& callbacks, Stats::Scope& scope, const Http1Settings& http1_settings,
-    const Http2Settings& http2_settings, const uint32_t max_request_headers_kb) {
+    const Http2Settings& http2_settings, uint32_t max_request_headers_kb,
+    uint32_t max_request_headers_count) {
   if (determineNextProtocol(connection, data) == Http2::ALPN_STRING) {
     return std::make_unique<Http2::ServerConnectionImpl>(connection, callbacks, scope,
-                                                         http2_settings, max_request_headers_kb);
+                                                         http2_settings, max_request_headers_kb,
+                                                         max_request_headers_count);
   } else {
-    return std::make_unique<Http1::ServerConnectionImpl>(connection, callbacks, http1_settings,
-                                                         max_request_headers_kb);
+    return std::make_unique<Http1::ServerConnectionImpl>(connection, scope, callbacks,
+                                                         http1_settings, max_request_headers_kb,
+                                                         max_request_headers_count);
   }
 }
 
 Network::Address::InstanceConstSharedPtr ConnectionManagerUtility::mutateRequestHeaders(
     HeaderMap& request_headers, Network::Connection& connection, ConnectionManagerConfig& config,
-    const Router::Config& route_config, Runtime::RandomGenerator& random, Runtime::Loader& runtime,
+    const Router::Config& route_config, Runtime::RandomGenerator& random,
     const LocalInfo::LocalInfo& local_info) {
   // If this is a Upgrade request, do not remove the Connection and Upgrade headers,
   // as we forward them verbatim to the upstream hosts.
@@ -84,6 +88,9 @@ Network::Address::InstanceConstSharedPtr ConnectionManagerUtility::mutateRequest
   Network::Address::InstanceConstSharedPtr final_remote_address;
   bool single_xff_address;
   const uint32_t xff_num_trusted_hops = config.xffNumTrustedHops();
+  const bool trusted_forwarded_proto =
+      Runtime::runtimeFeatureEnabled("envoy.reloadable_features.trusted_forwarded_proto");
+
   if (config.useRemoteAddress()) {
     single_xff_address = request_headers.ForwardedFor() == nullptr;
     // If there are any trusted proxies in front of this Envoy instance (as indicated by
@@ -106,8 +113,21 @@ Network::Address::InstanceConstSharedPtr ConnectionManagerUtility::mutateRequest
         Utility::appendXff(request_headers, *connection.remoteAddress());
       }
     }
-    request_headers.insertForwardedProto().value().setReference(
-        connection.ssl() ? Headers::get().SchemeValues.Https : Headers::get().SchemeValues.Http);
+    if (trusted_forwarded_proto) {
+      // If the prior hop is not a trusted proxy, overwrite any x-forwarded-proto value it set as
+      // untrusted. Alternately if no x-forwarded-proto header exists, add one.
+      if (xff_num_trusted_hops == 0 || request_headers.ForwardedProto() == nullptr) {
+        request_headers.insertForwardedProto().value().setReference(
+            connection.ssl() ? Headers::get().SchemeValues.Https
+                             : Headers::get().SchemeValues.Http);
+      }
+    } else {
+      // Previously, before the trusted_forwarded_proto logic, Envoy would always overwrite the
+      // x-forwarded-proto header even if it was set by a trusted proxy. This code path is
+      // deprecated and will be removed.
+      request_headers.insertForwardedProto().value().setReference(
+          connection.ssl() ? Headers::get().SchemeValues.Https : Headers::get().SchemeValues.Http);
+    }
   } else {
     // If we are not using remote address, attempt to pull a valid IPv4 or IPv6 address out of XFF.
     // If we find one, it will be used as the downstream address for logging. It may or may not be
@@ -117,8 +137,8 @@ Network::Address::InstanceConstSharedPtr ConnectionManagerUtility::mutateRequest
     single_xff_address = ret.single_address_;
   }
 
-  // If we didn't already replace x-forwarded-proto because we are using the remote address, and
-  // remote hasn't set it (trusted proxy), we set it, since we then use this for setting scheme.
+  // If the x-forwarded-proto header is not set, set it here, since Envoy uses it for determining
+  // scheme and communicating it upstream.
   if (!request_headers.ForwardedProto()) {
     request_headers.insertForwardedProto().value().setReference(
         connection.ssl() ? Headers::get().SchemeValues.Https : Headers::get().SchemeValues.Http);
@@ -159,6 +179,7 @@ Network::Address::InstanceConstSharedPtr ConnectionManagerUtility::mutateRequest
     }
 
     request_headers.removeEnvoyRetriableStatusCodes();
+    request_headers.removeEnvoyRetriableHeaderNames();
     request_headers.removeEnvoyRetryOn();
     request_headers.removeEnvoyRetryGrpcOn();
     request_headers.removeEnvoyMaxRetries();
@@ -170,6 +191,7 @@ Network::Address::InstanceConstSharedPtr ConnectionManagerUtility::mutateRequest
     request_headers.removeEnvoyForceTrace();
     request_headers.removeEnvoyIpTags();
     request_headers.removeEnvoyOriginalUrl();
+    request_headers.removeEnvoyHedgeOnPerTryTimeout();
 
     for (const LowerCaseString& header : route_config.internalOnlyHeaders()) {
       request_headers.remove(header);
@@ -187,7 +209,9 @@ Network::Address::InstanceConstSharedPtr ConnectionManagerUtility::mutateRequest
 
     // TODO(htuch): should this be under the config.userAgent() condition or in the outer scope?
     if (!local_info.nodeName().empty()) {
-      request_headers.insertEnvoyDownstreamServiceNode().value(local_info.nodeName());
+      // Following setReference() is safe because local info is constant for the life of the server.
+      request_headers.insertEnvoyDownstreamServiceNode().value().setReference(
+          local_info.nodeName());
     }
   }
 
@@ -203,14 +227,15 @@ Network::Address::InstanceConstSharedPtr ConnectionManagerUtility::mutateRequest
   }
 
   // Generate x-request-id for all edge requests, or if there is none.
-  if (config.generateRequestId() && (edge_request || !request_headers.RequestId())) {
+  if (config.generateRequestId()) {
     // TODO(PiotrSikora) PERF: Write UUID directly to the header map.
-    const std::string uuid = random.uuid();
-    ASSERT(!uuid.empty());
-    request_headers.insertRequestId().value(uuid);
+    if ((!config.preserveExternalRequestId() && edge_request) || !request_headers.RequestId()) {
+      const std::string uuid = random.uuid();
+      ASSERT(!uuid.empty());
+      request_headers.insertRequestId().value(uuid);
+    }
   }
 
-  mutateTracingRequestHeader(request_headers, runtime, config);
   mutateXfccRequestHeader(request_headers, connection, config);
 
   return final_remote_address;
@@ -218,7 +243,8 @@ Network::Address::InstanceConstSharedPtr ConnectionManagerUtility::mutateRequest
 
 void ConnectionManagerUtility::mutateTracingRequestHeader(HeaderMap& request_headers,
                                                           Runtime::Loader& runtime,
-                                                          ConnectionManagerConfig& config) {
+                                                          ConnectionManagerConfig& config,
+                                                          const Router::Route* route) {
   if (!config.tracingConfig() || !request_headers.RequestId()) {
     return;
   }
@@ -231,23 +257,31 @@ void ConnectionManagerUtility::mutateTracingRequestHeader(HeaderMap& request_hea
     return;
   }
 
+  const envoy::type::FractionalPercent* client_sampling = &config.tracingConfig()->client_sampling_;
+  const envoy::type::FractionalPercent* random_sampling = &config.tracingConfig()->random_sampling_;
+  const envoy::type::FractionalPercent* overall_sampling =
+      &config.tracingConfig()->overall_sampling_;
+
+  if (route && route->tracingConfig()) {
+    client_sampling = &route->tracingConfig()->getClientSampling();
+    random_sampling = &route->tracingConfig()->getRandomSampling();
+    overall_sampling = &route->tracingConfig()->getOverallSampling();
+  }
+
   // Do not apply tracing transformations if we are currently tracing.
   if (UuidTraceStatus::NoTrace == UuidUtils::isTraceableUuid(x_request_id)) {
     if (request_headers.ClientTraceId() &&
-        runtime.snapshot().featureEnabled("tracing.client_enabled",
-                                          config.tracingConfig()->client_sampling_)) {
+        runtime.snapshot().featureEnabled("tracing.client_enabled", *client_sampling)) {
       UuidUtils::setTraceableUuid(x_request_id, UuidTraceStatus::Client);
     } else if (request_headers.EnvoyForceTrace()) {
       UuidUtils::setTraceableUuid(x_request_id, UuidTraceStatus::Forced);
-    } else if (runtime.snapshot().featureEnabled("tracing.random_sampling",
-                                                 config.tracingConfig()->random_sampling_, result,
-                                                 10000)) {
+    } else if (runtime.snapshot().featureEnabled("tracing.random_sampling", *random_sampling,
+                                                 result)) {
       UuidUtils::setTraceableUuid(x_request_id, UuidTraceStatus::Sampled);
     }
   }
 
-  if (!runtime.snapshot().featureEnabled("tracing.global_enabled",
-                                         config.tracingConfig()->overall_sampling_, result)) {
+  if (!runtime.snapshot().featureEnabled("tracing.global_enabled", *overall_sampling, result)) {
     UuidUtils::setTraceableUuid(x_request_id, UuidTraceStatus::NoTrace);
   }
 
@@ -283,38 +317,45 @@ void ConnectionManagerUtility::mutateXfccRequestHeader(HeaderMap& request_header
       config.forwardClientCert() == ForwardClientCertType::SanitizeSet) {
     const auto uri_sans_local_cert = connection.ssl()->uriSanLocalCertificate();
     if (!uri_sans_local_cert.empty()) {
-      client_cert_details.push_back("By=" + uri_sans_local_cert[0]);
+      client_cert_details.push_back(absl::StrCat("By=", uri_sans_local_cert[0]));
     }
     const std::string cert_digest = connection.ssl()->sha256PeerCertificateDigest();
     if (!cert_digest.empty()) {
-      client_cert_details.push_back("Hash=" + cert_digest);
+      client_cert_details.push_back(absl::StrCat("Hash=", cert_digest));
     }
     for (const auto& detail : config.setCurrentClientCertDetails()) {
       switch (detail) {
       case ClientCertDetailsType::Cert: {
         const std::string peer_cert = connection.ssl()->urlEncodedPemEncodedPeerCertificate();
         if (!peer_cert.empty()) {
-          client_cert_details.push_back("Cert=\"" + peer_cert + "\"");
+          client_cert_details.push_back(absl::StrCat("Cert=\"", peer_cert, "\""));
+        }
+        break;
+      }
+      case ClientCertDetailsType::Chain: {
+        const std::string peer_chain = connection.ssl()->urlEncodedPemEncodedPeerCertificateChain();
+        if (!peer_chain.empty()) {
+          client_cert_details.push_back(absl::StrCat("Chain=\"", peer_chain, "\""));
         }
         break;
       }
       case ClientCertDetailsType::Subject:
         // The "Subject" key still exists even if the subject is empty.
-        client_cert_details.push_back("Subject=\"" + connection.ssl()->subjectPeerCertificate() +
-                                      "\"");
+        client_cert_details.push_back(
+            absl::StrCat("Subject=\"", connection.ssl()->subjectPeerCertificate(), "\""));
         break;
       case ClientCertDetailsType::URI: {
         // The "URI" key still exists even if the URI is empty.
         const auto sans = connection.ssl()->uriSanPeerCertificate();
         const auto& uri_san = sans.empty() ? "" : sans[0];
-        client_cert_details.push_back("URI=" + uri_san);
+        client_cert_details.push_back(absl::StrCat("URI=", uri_san));
         break;
       }
       case ClientCertDetailsType::DNS: {
-        const std::vector<std::string> dns_sans = connection.ssl()->dnsSansPeerCertificate();
+        auto dns_sans = connection.ssl()->dnsSansPeerCertificate();
         if (!dns_sans.empty()) {
           for (const std::string& dns : dns_sans) {
-            client_cert_details.push_back("DNS=" + dns);
+            client_cert_details.push_back(absl::StrCat("DNS=", dns));
           }
         }
         break;
@@ -370,10 +411,15 @@ void ConnectionManagerUtility::mutateResponseHeaders(HeaderMap& response_headers
 bool ConnectionManagerUtility::maybeNormalizePath(HeaderMap& request_headers,
                                                   const ConnectionManagerConfig& config) {
   ASSERT(request_headers.Path());
+  bool is_valid_path = true;
   if (config.shouldNormalizePath()) {
-    return PathUtil::canonicalPath(*request_headers.Path());
+    is_valid_path = PathUtil::canonicalPath(*request_headers.Path());
   }
-  return true;
+  // Merge slashes after path normalization to catch potential edge cases with percent encoding.
+  if (is_valid_path && config.shouldMergeSlashes()) {
+    PathUtil::mergeSlashes(*request_headers.Path());
+  }
+  return is_valid_path;
 }
 
 } // namespace Http

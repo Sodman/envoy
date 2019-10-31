@@ -109,9 +109,8 @@ public:
   SymbolTable::StoragePtr join(const std::vector<StatName>& names) const override {
     std::vector<absl::string_view> strings;
     for (StatName name : names) {
-      absl::string_view str = toStringView(name);
-      if (!str.empty()) {
-        strings.push_back(str);
+      if (!name.empty()) {
+        strings.push_back(toStringView(name));
       }
     }
     return encodeHelper(absl::StrJoin(strings, "."));
@@ -126,12 +125,24 @@ public:
     fn(toStringView(stat_name));
   }
 
+  StatNameSetPtr makeSet(absl::string_view name) override {
+    // make_unique does not work with private ctor, even though FakeSymbolTableImpl is a friend.
+    return StatNameSetPtr(new StatNameSet(*this, name));
+  }
+  void forgetSet(StatNameSet&) override {}
+  uint64_t getRecentLookups(const RecentLookupsFn&) const override { return 0; }
+  void clearRecentLookups() override {}
+  void setRecentLookupCapacity(uint64_t) override {}
+  uint64_t recentLookupCapacity() const override { return 0; }
+
 private:
   absl::string_view toStringView(const StatName& stat_name) const {
-    return {reinterpret_cast<const char*>(stat_name.data()), stat_name.dataSize()};
+    return {reinterpret_cast<const char*>(stat_name.data()),
+            static_cast<absl::string_view::size_type>(stat_name.dataSize())};
   }
 
   StoragePtr encodeHelper(absl::string_view name) const {
+    ASSERT(!absl::EndsWith(name, "."));
     auto bytes = std::make_unique<Storage>(name.size() + StatNameSizeEncodingBytes);
     uint8_t* buffer = SymbolTableImpl::writeLengthReturningNext(name.size(), bytes.get());
     memcpy(buffer, name.data(), name.size());

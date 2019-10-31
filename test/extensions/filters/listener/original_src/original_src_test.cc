@@ -4,7 +4,6 @@
 #include "common/network/utility.h"
 
 #include "extensions/filters/listener/original_src/original_src.h"
-#include "extensions/filters/listener/original_src/original_src_socket_option.h"
 
 #include "test/mocks/buffer/mocks.h"
 #include "test/mocks/common.h"
@@ -15,7 +14,6 @@
 #include "gtest/gtest.h"
 
 using testing::_;
-using testing::Exactly;
 using testing::SaveArg;
 
 namespace Envoy {

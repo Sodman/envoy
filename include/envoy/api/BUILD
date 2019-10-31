@@ -14,6 +14,7 @@ envoy_cc_library(
     deps = [
         "//include/envoy/event:dispatcher_interface",
         "//include/envoy/filesystem:filesystem_interface",
+        "//include/envoy/server:process_context_interface",
         "//include/envoy/thread:thread_interface",
     ],
 )
@@ -28,6 +29,7 @@ envoy_cc_library(
     hdrs = [
         "os_sys_calls.h",
         "os_sys_calls_common.h",
+        "os_sys_calls_hot_restart.h",
         "os_sys_calls_linux.h",
     ],
 )

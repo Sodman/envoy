@@ -11,13 +11,14 @@
 #include "common/json/json_loader.h"
 
 #include "absl/types/optional.h"
+#include "tools/cpp/runfiles/runfiles.h"
 
 namespace Envoy {
 class TestEnvironment {
 public:
-  typedef std::unordered_map<std::string, uint32_t> PortMap;
+  using PortMap = std::unordered_map<std::string, uint32_t>;
 
-  typedef std::unordered_map<std::string, std::string> ParamMap;
+  using ParamMap = std::unordered_map<std::string, std::string>;
 
   /**
    * Initialize command-line options for later access by tests in getOptions().
@@ -79,18 +80,17 @@ public:
 
   /**
    * Obtain read-only test input data directory.
+   * @param workspace the name of the Bazel workspace where the input data is.
    * @return const std::string& with the path to the read-only test input directory.
    */
-  static const std::string& runfilesDirectory();
+  static std::string runfilesDirectory(const std::string& workspace = "envoy");
 
   /**
    * Prefix a given path with the read-only test input data directory.
    * @param path path suffix.
    * @return std::string path qualified with read-only test input data directory.
    */
-  static std::string runfilesPath(const std::string& path) {
-    return runfilesDirectory() + "/" + path;
-  }
+  static std::string runfilesPath(const std::string& path, const std::string& workspace = "envoy");
 
   /**
    * Obtain Unix Domain Socket temporary directory.
@@ -164,10 +164,12 @@ public:
    *
    * @param filename: the name of the file to use
    * @param contents: the data to go in the file.
+   * @param fully_qualified_path: if true, will write to filename without prepending the tempdir.
    * @return the fully qualified path of the output file.
    */
   static std::string writeStringToFileForTest(const std::string& filename,
-                                              const std::string& contents);
+                                              const std::string& contents,
+                                              bool fully_qualified_path = false);
   /**
    * Dumps the contents of the file into the string.
    *
@@ -201,6 +203,19 @@ public:
    * Set environment variable. Same args as setenv(2).
    */
   static void setEnvVar(const std::string& name, const std::string& value, int overwrite);
+
+  /**
+   * Removes environment variable. Same args as unsetenv(3).
+   */
+  static void unsetEnvVar(const std::string& name);
+
+  /**
+   * Set runfiles with current test, this have to be called before calling path related functions.
+   */
+  static void setRunfiles(bazel::tools::cpp::runfiles::Runfiles* runfiles);
+
+private:
+  static bazel::tools::cpp::runfiles::Runfiles* runfiles_;
 };
 
 } // namespace Envoy

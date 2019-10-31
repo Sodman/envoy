@@ -31,11 +31,12 @@ envoy_cc_test_library(
     srcs = ["buffer_fuzz.cc"],
     hdrs = ["buffer_fuzz.h"],
     deps = [
-        ":buffer_fuzz_proto_cc",
+        ":buffer_fuzz_proto_cc_proto",
         "//source/common/buffer:buffer_lib",
         "//source/common/common:stack_array",
         "//source/common/memory:stats_lib",
-        "//source/common/network:io_socket_handle_lib",
+        "//source/common/network:address_lib",
+        "//test/fuzz:utility_lib",
     ],
 )
 
@@ -70,7 +71,7 @@ envoy_cc_test(
     deps = [
         ":utility_lib",
         "//source/common/buffer:buffer_lib",
-        "//source/common/network:io_socket_handle_lib",
+        "//source/common/network:address_lib",
         "//test/mocks/api:api_mocks",
         "//test/test_common:logging_lib",
         "//test/test_common:threadsafe_singleton_injector_lib",
@@ -84,7 +85,7 @@ envoy_cc_test(
         ":utility_lib",
         "//source/common/buffer:buffer_lib",
         "//source/common/buffer:watermark_buffer_lib",
-        "//source/common/network:io_socket_handle_lib",
+        "//source/common/network:address_lib",
     ],
 )
 

@@ -40,7 +40,7 @@ protected:
       Api::Api& api
                       
                       );
-  ~ExtensionConfigBase();
+  ~ExtensionConfigBase() override;
 
   // All tap configurations derive from TapConfig for type safety. In order to use a common
   // extension base class (with TLS logic, etc.) we must dynamic cast to the actual tap

@@ -6,6 +6,7 @@
 #include <string>
 
 #include "envoy/access_log/access_log.h"
+#include "envoy/common/scope_tracker.h"
 #include "envoy/event/dispatcher.h"
 #include "envoy/grpc/status.h"
 #include "envoy/http/codec.h"
@@ -124,7 +125,7 @@ enum class FilterMetadataStatus {
  */
 class StreamFilterCallbacks {
 public:
-  virtual ~StreamFilterCallbacks() {}
+  virtual ~StreamFilterCallbacks() = default;
 
   /**
    * @return const Network::Connection* the originating connection, or nullptr if there is none.
@@ -185,6 +186,11 @@ public:
    * @return tracing configuration.
    */
   virtual const Tracing::Config& tracingConfig() PURE;
+
+  /**
+   * @return the ScopeTrackedObject for this stream.
+   */
+  virtual const ScopeTrackedObject& scope() PURE;
 };
 
 /**
@@ -236,7 +242,8 @@ public:
    *
    * 4) If additional data needs to be added in the decodeTrailers() callback, this method can be
    * called in the context of the callback. All further filters will receive decodeData(..., false)
-   * followed by decodeTrailers().
+   * followed by decodeTrailers(). However if the iteration is stopped, the added data will
+   * buffered, so that the further filters will not receive decodeData() before decodeHeaders().
    *
    * It is an error to call this method in any other case.
    *
@@ -284,18 +291,6 @@ public:
   virtual HeaderMap& addDecodedTrailers() PURE;
 
   /**
-   * A wrapper for legacy sendLocalReply replies without the details parameter.
-   * See sendLocalReply below for usage
-   */
-  // TODO(alyssawilk) send an email to envoy-dev for API change, add for all other filters, and
-  // delete this placeholder.
-  void sendLocalReply(Code response_code, absl::string_view body_text,
-                      std::function<void(HeaderMap& headers)> modify_headers,
-                      const absl::optional<Grpc::Status::GrpcStatus> grpc_status) {
-    sendLocalReply(response_code, body_text, modify_headers, grpc_status, "");
-  }
-
-  /**
    * Create a locally generated response using the provided response_code and body_text parameters.
    * If the request was a gRPC request the local reply will be encoded as a gRPC response with a 200
    * HTTP response code and grpc-status and grpc-message headers mapped from the provided
@@ -313,6 +308,15 @@ public:
                               std::function<void(HeaderMap& headers)> modify_headers,
                               const absl::optional<Grpc::Status::GrpcStatus> grpc_status,
                               absl::string_view details) PURE;
+
+  /**
+   * Adds decoded metadata. This function can only be called in
+   * StreamDecoderFilter::decodeHeaders/Data/Trailers(). Do not call in
+   * StreamDecoderFilter::decodeMetadata().
+   *
+   * @return a reference to metadata map vector, where new metadata map can be added.
+   */
+  virtual MetadataMapVector& addDecodedMetadata() PURE;
 
   /**
    * Called with 100-Continue headers to be encoded.
@@ -418,6 +422,20 @@ public:
   // Note that HttpConnectionManager sanitization will *not* be performed on the
   // recreated stream, as it is assumed that sanitization has already been done.
   virtual bool recreateStream() PURE;
+
+  /**
+   * Adds socket options to be applied to any connections used for upstream requests. Note that
+   * unique values for the options will likely lead to many connection pools being created. The
+   * added options are appended to any previously added.
+   *
+   * @param options The options to be added.
+   */
+  virtual void addUpstreamSocketOptions(const Network::Socket::OptionsSharedPtr& options) PURE;
+
+  /**
+   * @return The socket options to be applied to the upstream request.
+   */
+  virtual Network::Socket::OptionsSharedPtr getUpstreamSocketOptions() const PURE;
 };
 
 /**
@@ -425,7 +443,7 @@ public:
  */
 class StreamFilterBase {
 public:
-  virtual ~StreamFilterBase() {}
+  virtual ~StreamFilterBase() = default;
 
   /**
    * This routine is called prior to a filter being destroyed. This may happen after normal stream
@@ -467,6 +485,22 @@ public:
   virtual FilterTrailersStatus decodeTrailers(HeaderMap& trailers) PURE;
 
   /**
+   * Called with decoded metadata. Add new metadata to metadata_map directly. Do not call
+   * StreamDecoderFilterCallbacks::addDecodedMetadata() to add new metadata.
+   *
+   * Note: decodeMetadata() currently cannot stop the filter iteration, and always returns Continue.
+   * That means metadata will go through the complete filter chain at once, even if the other frame
+   * types return StopIteration. If metadata should not pass through all filters at once, users
+   * should consider using StopAllIterationAndBuffer or StopAllIterationAndWatermark in
+   * decodeHeaders() to prevent metadata passing to the following filters.
+   *
+   * @param metadata supplies the decoded metadata.
+   */
+  virtual FilterMetadataStatus decodeMetadata(MetadataMap& /* metadata_map */) {
+    return Http::FilterMetadataStatus::Continue;
+  }
+
+  /**
    * Called by the filter manager once to initialize the filter decoder callbacks that the
    * filter should use. Callbacks will not be invoked by the filter after onDestroy() is called.
    */
@@ -478,7 +512,7 @@ public:
   virtual void decodeComplete() {}
 };
 
-typedef std::shared_ptr<StreamDecoderFilter> StreamDecoderFilterSharedPtr;
+using StreamDecoderFilterSharedPtr = std::shared_ptr<StreamDecoderFilter>;
 
 /**
  * Stream encoder filter callbacks add additional callbacks that allow a encoding filter to restart
@@ -529,7 +563,8 @@ public:
    *
    * 4) If additional data needs to be added in the encodeTrailers() callback, this method can be
    * called in the context of the callback. All further filters will receive encodeData(..., false)
-   * followed by encodeTrailers().
+   * followed by encodeTrailers(). However if the iteration is stopped, the added data will
+   * buffered, so that the further filters will not receive encodeData() before encodeHeaders().
    *
    * It is an error to call this method in any other case.
    *
@@ -575,6 +610,13 @@ public:
    * @return a reference to the newly created trailers map.
    */
   virtual HeaderMap& addEncodedTrailers() PURE;
+
+  /**
+   * Adds new metadata to be encoded.
+   *
+   * @param metadata_map supplies the unique_ptr of the metadata to be encoded.
+   */
+  virtual void addEncodedMetadata(MetadataMapPtr&& metadata_map) PURE;
 
   /**
    * Called when an encoder filter goes over its high watermark.
@@ -664,14 +706,14 @@ public:
   virtual void encodeComplete() {}
 };
 
-typedef std::shared_ptr<StreamEncoderFilter> StreamEncoderFilterSharedPtr;
+using StreamEncoderFilterSharedPtr = std::shared_ptr<StreamEncoderFilter>;
 
 /**
  * A filter that handles both encoding and decoding.
  */
 class StreamFilter : public virtual StreamDecoderFilter, public virtual StreamEncoderFilter {};
 
-typedef std::shared_ptr<StreamFilter> StreamFilterSharedPtr;
+using StreamFilterSharedPtr = std::shared_ptr<StreamFilter>;
 
 /**
  * These callbacks are provided by the connection manager to the factory so that the factory can
@@ -679,7 +721,7 @@ typedef std::shared_ptr<StreamFilter> StreamFilterSharedPtr;
  */
 class FilterChainFactoryCallbacks {
 public:
-  virtual ~FilterChainFactoryCallbacks() {}
+  virtual ~FilterChainFactoryCallbacks() = default;
 
   /**
    * Add a decoder filter that is used when reading stream data.
@@ -714,7 +756,7 @@ public:
  * function will install a single filter, but it's technically possibly to install more than one
  * if desired.
  */
-typedef std::function<void(FilterChainFactoryCallbacks& callbacks)> FilterFactoryCb;
+using FilterFactoryCb = std::function<void(FilterChainFactoryCallbacks& callbacks)>;
 
 /**
  * A FilterChainFactory is used by a connection manager to create an HTTP level filter chain when a
@@ -724,7 +766,7 @@ typedef std::function<void(FilterChainFactoryCallbacks& callbacks)> FilterFactor
  */
 class FilterChainFactory {
 public:
-  virtual ~FilterChainFactory() {}
+  virtual ~FilterChainFactory() = default;
 
   /**
    * Called when a new HTTP stream is created on the connection.
@@ -742,7 +784,7 @@ public:
    * @return true if upgrades of this type are allowed and the filter chain has been created.
    *    returns false if this upgrade type is not configured, and no filter chain is created.
    */
-  typedef std::map<std::string, bool> UpgradeMap;
+  using UpgradeMap = std::map<std::string, bool>;
   virtual bool createUpgradeFilterChain(absl::string_view upgrade,
                                         const UpgradeMap* per_route_upgrade_map,
                                         FilterChainFactoryCallbacks& callbacks) PURE;

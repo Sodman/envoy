@@ -15,8 +15,6 @@
 #include "absl/strings/str_cat.h"
 #include "gtest/gtest.h"
 
-using testing::MatchesRegex;
-
 namespace Envoy {
 namespace {
 
@@ -357,7 +355,7 @@ TEST_P(WebsocketIntegrationTest, WebsocketCustomFilterChain) {
         auto* filter_list_back = foo_upgrade->add_filters();
         const std::string json =
             Json::Factory::loadFromYamlString("name: envoy.router")->asJsonString();
-        MessageUtil::loadFromJson(json, *filter_list_back);
+        TestUtility::loadFromJson(json, *filter_list_back);
       });
   initialize();
 

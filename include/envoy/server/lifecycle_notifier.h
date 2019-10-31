@@ -22,13 +22,28 @@ public:
     Startup,
 
     /**
+     * The server instance init manager has finished initialization.
+     */
+    PostInit,
+
+    /**
      * The server instance is being shutdown and the dispatcher is about to exit.
      * This provides listeners a last chance to run a callback on the main dispatcher.
      * Note: the server will wait for callbacks that registered to take a completion
      * before exiting the dispatcher loop.
+     * Note: callbacks that registered with a completion will only be notified for this
+     * stage if the server did not prematurely shutdown before fully starting up (specifically
+     * if the server shutdown before worker threads were started).
      */
     ShutdownExit
   };
+
+  // A handle to a callback registration. Deleting this handle will unregister the callback.
+  class Handle {
+  public:
+    virtual ~Handle() = default;
+  };
+  using HandlePtr = std::unique_ptr<Handle>;
 
   /**
    * Callback invoked when the server reaches a certain lifecycle stage.
@@ -49,8 +64,8 @@ public:
    * The second version which takes a completion back is currently only supported
    * for the ShutdownExit stage.
    */
-  virtual void registerCallback(Stage stage, StageCallback callback) PURE;
-  virtual void registerCallback(Stage stage, StageCallbackWithCompletion callback) PURE;
+  virtual HandlePtr registerCallback(Stage stage, StageCallback callback) PURE;
+  virtual HandlePtr registerCallback(Stage stage, StageCallbackWithCompletion callback) PURE;
 };
 
 } // namespace Server

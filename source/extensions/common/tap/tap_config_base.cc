@@ -98,7 +98,7 @@ bool TapConfigBaseImpl::enabled(uint64_t random_value) const {
 }
 
 const Matcher& TapConfigBaseImpl::rootMatcher() const {
-  ASSERT(matchers_.size() >= 1);
+  ASSERT(!matchers_.empty());
   return *matchers_[0];
 }
 

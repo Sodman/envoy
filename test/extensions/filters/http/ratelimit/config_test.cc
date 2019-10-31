@@ -1,7 +1,5 @@
 #include "envoy/config/filter/http/rate_limit/v2/rate_limit.pb.validate.h"
 
-#include "common/config/filter_json.h"
-
 #include "extensions/filters/http/ratelimit/config.h"
 
 #include "test/mocks/server/mocks.h"
@@ -10,7 +8,6 @@
 #include "gtest/gtest.h"
 
 using testing::_;
-using testing::ReturnRef;
 
 namespace Envoy {
 namespace Extensions {
@@ -36,7 +33,7 @@ TEST(RateLimitFilterConfigTest, RatelimitCorrectProto) {
   )EOF";
 
   envoy::config::filter::http::rate_limit::v2::RateLimit proto_config{};
-  MessageUtil::loadFromYamlAndValidate(yaml, proto_config);
+  TestUtility::loadFromYamlAndValidate(yaml, proto_config);
 
   NiceMock<Server::Configuration::MockFactoryContext> context;
 
@@ -73,7 +70,7 @@ TEST(RateLimitFilterConfigTest, BadRateLimitFilterConfig) {
   )EOF";
 
   envoy::config::filter::http::rate_limit::v2::RateLimit proto_config{};
-  EXPECT_THROW_WITH_REGEX(MessageUtil::loadFromYamlAndValidate(yaml, proto_config), EnvoyException,
+  EXPECT_THROW_WITH_REGEX(TestUtility::loadFromYamlAndValidate(yaml, proto_config), EnvoyException,
                           "route_key: Cannot find field");
 }
 

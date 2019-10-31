@@ -33,6 +33,7 @@ struct RawSlice {
  */
 class BufferFragment {
 public:
+  virtual ~BufferFragment() = default;
   /**
    * @return const void* a pointer to the referenced data.
    */
@@ -47,9 +48,6 @@ public:
    * Called by a buffer when the referenced data is no longer needed.
    */
   virtual void done() PURE;
-
-protected:
-  virtual ~BufferFragment() {}
 };
 
 /**
@@ -57,7 +55,7 @@ protected:
  */
 class Instance {
 public:
-  virtual ~Instance() {}
+  virtual ~Instance() = default;
 
   /**
    * Copy data into the buffer (deprecated, use absl::string_view variant
@@ -183,13 +181,20 @@ public:
   virtual uint64_t reserve(uint64_t length, RawSlice* iovecs, uint64_t num_iovecs) PURE;
 
   /**
-   * Search for an occurrence of a buffer within the larger buffer.
+   * Search for an occurrence of data within the buffer.
    * @param data supplies the data to search for.
    * @param size supplies the length of the data to search for.
    * @param start supplies the starting index to search from.
    * @return the index where the match starts or -1 if there is no match.
    */
   virtual ssize_t search(const void* data, uint64_t size, size_t start) const PURE;
+
+  /**
+   * Search for an occurrence of data at the start of a buffer.
+   * @param data supplies the data to search for.
+   * @return true if this buffer starts with data, false otherwise.
+   */
+  virtual bool startsWith(absl::string_view data) const PURE;
 
   /**
    * Constructs a flattened string from a buffer.
@@ -357,14 +362,14 @@ public:
   }
 };
 
-typedef std::unique_ptr<Instance> InstancePtr;
+using InstancePtr = std::unique_ptr<Instance>;
 
 /**
  * A factory for creating buffers which call callbacks when reaching high and low watermarks.
  */
 class WatermarkFactory {
 public:
-  virtual ~WatermarkFactory() {}
+  virtual ~WatermarkFactory() = default;
 
   /**
    * Creates and returns a unique pointer to a new buffer.
@@ -378,7 +383,7 @@ public:
                              std::function<void()> above_high_watermark) PURE;
 };
 
-typedef std::unique_ptr<WatermarkFactory> WatermarkFactoryPtr;
+using WatermarkFactoryPtr = std::unique_ptr<WatermarkFactory>;
 
 } // namespace Buffer
 } // namespace Envoy

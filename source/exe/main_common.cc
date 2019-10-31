@@ -6,9 +6,8 @@
 
 #include "common/common/compiler_requirements.h"
 #include "common/common/perf_annotation.h"
-#include "common/event/libevent.h"
-#include "common/http/http2/codec_impl.h"
 #include "common/network/utility.h"
+#include "common/stats/symbol_table_creator.h"
 #include "common/stats/thread_local_store.h"
 
 #include "server/config_validation/server.h"
@@ -16,18 +15,12 @@
 #include "server/hot_restart_nop_impl.h"
 #include "server/listener_hooks.h"
 #include "server/options_impl.h"
-#include "server/proto_descriptors.h"
 #include "server/server.h"
 
 #include "absl/strings/str_split.h"
 
 #ifdef ENVOY_HOT_RESTART
 #include "server/hot_restart_impl.h"
-#endif
-
-#include "ares.h"
-#ifdef ENVOY_GOOGLE_GRPC
-#include "grpc/grpc.h"
 #endif
 
 namespace Envoy {
@@ -50,17 +43,12 @@ MainCommonBase::MainCommonBase(const OptionsImpl& options, Event::TimeSystem& ti
                                Server::ComponentFactory& component_factory,
                                std::unique_ptr<Runtime::RandomGenerator>&& random_generator,
                                Thread::ThreadFactory& thread_factory,
-                               Filesystem::Instance& file_system)
+                               Filesystem::Instance& file_system,
+                               std::unique_ptr<ProcessContext> process_context)
     : options_(options), component_factory_(component_factory), thread_factory_(thread_factory),
-      file_system_(file_system), stats_allocator_(symbol_table_) {
-#ifdef ENVOY_GOOGLE_GRPC
-  grpc_init();
-#endif
-  ares_library_init(ARES_LIB_INIT_ALL);
-  Event::Libevent::Global::initialize();
-  RELEASE_ASSERT(Envoy::Server::validateProtoDescriptors(), "");
-  Http::Http2::initializeNghttp2Logging();
-
+      file_system_(file_system), symbol_table_(Stats::SymbolTableCreator::initAndMakeSymbolTable(
+                                     options_.fakeSymbolTableEnabled())),
+      stats_allocator_(*symbol_table_) {
   switch (options_.mode()) {
   case Server::Mode::InitOnly:
   case Server::Mode::Serve: {
@@ -89,9 +77,9 @@ MainCommonBase::MainCommonBase(const OptionsImpl& options, Event::TimeSystem& ti
     stats_store_ = std::make_unique<Stats::ThreadLocalStoreImpl>(stats_allocator_);
 
     server_ = std::make_unique<Server::InstanceImpl>(
-        options_, time_system, local_address, listener_hooks, *restarter_, *stats_store_,
-        access_log_lock, component_factory, std::move(random_generator), *tls_, thread_factory_,
-        file_system_);
+        *init_manager_, options_, time_system, local_address, listener_hooks, *restarter_,
+        *stats_store_, access_log_lock, component_factory, std::move(random_generator), *tls_,
+        thread_factory_, file_system_, std::move(process_context));
 
     break;
   }
@@ -101,13 +89,6 @@ MainCommonBase::MainCommonBase(const OptionsImpl& options, Event::TimeSystem& ti
                                                          restarter_->logLock());
     break;
   }
-}
-
-MainCommonBase::~MainCommonBase() {
-  ares_library_cleanup();
-#ifdef ENVOY_GOOGLE_GRPC
-  grpc_shutdown();
-#endif
 }
 
 void MainCommonBase::configureComponentLogLevels() {
@@ -151,7 +132,7 @@ MainCommon::MainCommon(int argc, const char* const* argv)
     : options_(argc, argv, &MainCommon::hotRestartVersion, spdlog::level::info),
       base_(options_, real_time_system_, default_listener_hooks_, prod_component_factory_,
             std::make_unique<Runtime::RandomGeneratorImpl>(), platform_impl_.threadFactory(),
-            platform_impl_.fileSystem()) {}
+            platform_impl_.fileSystem(), nullptr) {}
 
 std::string MainCommon::hotRestartVersion(bool hot_restart_enabled) {
 #ifdef ENVOY_HOT_RESTART

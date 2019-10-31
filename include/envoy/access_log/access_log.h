@@ -12,7 +12,7 @@ namespace AccessLog {
 
 class AccessLogFile {
 public:
-  virtual ~AccessLogFile() {}
+  virtual ~AccessLogFile() = default;
 
   /**
    * Write data to the file.
@@ -34,7 +34,7 @@ using AccessLogFileSharedPtr = std::shared_ptr<AccessLogFile>;
 
 class AccessLogManager {
 public:
-  virtual ~AccessLogManager() {}
+  virtual ~AccessLogManager() = default;
 
   /**
    * Reopen all of the access log files.
@@ -56,7 +56,7 @@ using AccessLogManagerPtr = std::unique_ptr<AccessLogManager>;
  */
 class Filter {
 public:
-  virtual ~Filter() {}
+  virtual ~Filter() = default;
 
   /**
    * Evaluate whether an access log should be written based on request and response data.
@@ -74,10 +74,14 @@ using FilterPtr = std::unique_ptr<Filter>;
  */
 class Instance {
 public:
-  virtual ~Instance() {}
+  virtual ~Instance() = default;
 
   /**
    * Log a completed request.
+   * Prior to logging, call refreshByteSize() on HeaderMaps to ensure that an accurate byte size
+   * count is logged.
+   * TODO(asraa): Remove refreshByteSize() requirement when entries in HeaderMap can no longer be
+   * modified by reference and headerMap holds an accurate internal byte size count.
    * @param request_headers supplies the incoming request headers after filtering.
    * @param response_headers supplies response headers.
    * @param response_trailers supplies response trailers.
@@ -97,7 +101,7 @@ using InstanceSharedPtr = std::shared_ptr<Instance>;
  */
 class Formatter {
 public:
-  virtual ~Formatter() {}
+  virtual ~Formatter() = default;
 
   /**
    * Return a formatted access log line.
@@ -121,7 +125,7 @@ using FormatterPtr = std::unique_ptr<Formatter>;
  */
 class FormatterProvider {
 public:
-  virtual ~FormatterProvider() {}
+  virtual ~FormatterProvider() = default;
 
   /**
    * Extract a value from the provided headers/trailers/stream.

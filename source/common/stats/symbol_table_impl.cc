@@ -16,21 +16,17 @@ namespace Stats {
 static const uint32_t SpilloverMask = 0x80;
 static const uint32_t Low7Bits = 0x7f;
 
-StatName::StatName(const StatName& src, SymbolTable::Storage memory) : size_and_data_(memory) {
-  memcpy(memory, src.size_and_data_, src.size());
-}
-
 #ifndef ENVOY_CONFIG_COVERAGE
 void StatName::debugPrint() {
   if (size_and_data_ == nullptr) {
     ENVOY_LOG_MISC(info, "Null StatName");
   } else {
-    uint64_t nbytes = dataSize();
+    const uint64_t nbytes = dataSize();
     std::string msg = absl::StrCat("dataSize=", nbytes, ":");
     for (uint64_t i = 0; i < nbytes; ++i) {
       absl::StrAppend(&msg, " ", static_cast<uint64_t>(data()[i]));
     }
-    SymbolVec encoding = SymbolTableImpl::Encoding::decodeSymbols(data(), dataSize());
+    const SymbolVec encoding = SymbolTableImpl::Encoding::decodeSymbols(data(), dataSize());
     absl::StrAppend(&msg, ", numSymbols=", encoding.size(), ":");
     for (Symbol symbol : encoding) {
       absl::StrAppend(&msg, " ", symbol);
@@ -87,7 +83,7 @@ SymbolVec SymbolTableImpl::Encoding::decodeSymbols(const SymbolTable::Storage ar
 }
 
 uint64_t SymbolTableImpl::Encoding::moveToStorage(SymbolTable::Storage symbol_array) {
-  uint64_t sz = dataBytesRequired();
+  const uint64_t sz = dataBytesRequired();
   symbol_array = writeLengthReturningNext(sz, symbol_array);
   if (sz != 0) {
     memcpy(symbol_array, vec_.data(), sz * sizeof(uint8_t));
@@ -118,7 +114,7 @@ void SymbolTableImpl::addTokensToEncoding(const absl::string_view name, Encoding
 
   // We want to hold the lock for the minimum amount of time, so we do the
   // string-splitting and prepare a temp vector of Symbol first.
-  std::vector<absl::string_view> tokens = absl::StrSplit(name, '.');
+  const std::vector<absl::string_view> tokens = absl::StrSplit(name, '.');
   std::vector<Symbol> symbols;
   symbols.reserve(tokens.size());
 
@@ -126,6 +122,7 @@ void SymbolTableImpl::addTokensToEncoding(const absl::string_view name, Encoding
   // ref-counts in this.
   {
     Thread::LockGuard lock(lock_);
+    recent_lookups_.lookup(name);
     for (auto& token : tokens) {
       symbols.push_back(toSymbol(token));
     }
@@ -167,14 +164,14 @@ std::string SymbolTableImpl::decodeSymbolVec(const SymbolVec& symbols) const {
 
 void SymbolTableImpl::incRefCount(const StatName& stat_name) {
   // Before taking the lock, decode the array of symbols from the SymbolTable::Storage.
-  SymbolVec symbols = Encoding::decodeSymbols(stat_name.data(), stat_name.dataSize());
+  const SymbolVec symbols = Encoding::decodeSymbols(stat_name.data(), stat_name.dataSize());
 
   Thread::LockGuard lock(lock_);
   for (Symbol symbol : symbols) {
     auto decode_search = decode_map_.find(symbol);
     ASSERT(decode_search != decode_map_.end());
 
-    auto encode_search = encode_map_.find(*decode_search->second);
+    auto encode_search = encode_map_.find(decode_search->second->toStringView());
     ASSERT(encode_search != encode_map_.end());
 
     ++encode_search->second.ref_count_;
@@ -183,14 +180,14 @@ void SymbolTableImpl::incRefCount(const StatName& stat_name) {
 
 void SymbolTableImpl::free(const StatName& stat_name) {
   // Before taking the lock, decode the array of symbols from the SymbolTable::Storage.
-  SymbolVec symbols = Encoding::decodeSymbols(stat_name.data(), stat_name.dataSize());
+  const SymbolVec symbols = Encoding::decodeSymbols(stat_name.data(), stat_name.dataSize());
 
   Thread::LockGuard lock(lock_);
   for (Symbol symbol : symbols) {
     auto decode_search = decode_map_.find(symbol);
     ASSERT(decode_search != decode_map_.end());
 
-    auto encode_search = encode_map_.find(*decode_search->second);
+    auto encode_search = encode_map_.find(decode_search->second->toStringView());
     ASSERT(encode_search != encode_map_.end());
 
     // If that was the last remaining client usage of the symbol, erase the
@@ -206,6 +203,98 @@ void SymbolTableImpl::free(const StatName& stat_name) {
     }
   }
 }
+
+uint64_t SymbolTableImpl::getRecentLookups(const RecentLookupsFn& iter) const {
+  uint64_t total = 0;
+  absl::flat_hash_map<std::string, uint64_t> name_count_map;
+
+  // We don't want to hold stat_name_set_mutex while calling the iterator, so
+  // buffer lookup_data.
+  {
+    Thread::LockGuard lock(stat_name_set_mutex_);
+    for (StatNameSet* stat_name_set : stat_name_sets_) {
+      total +=
+          stat_name_set->getRecentLookups([&name_count_map](absl::string_view str, uint64_t count) {
+            name_count_map[std::string(str)] += count;
+          });
+    }
+  }
+
+  // We also don't want to hold lock_ while calling the iterator, but we need it
+  // to access recent_lookups_.
+  {
+    Thread::LockGuard lock(lock_);
+    recent_lookups_.forEach(
+        [&name_count_map](absl::string_view str, uint64_t count)
+            NO_THREAD_SAFETY_ANALYSIS { name_count_map[std::string(str)] += count; });
+    total += recent_lookups_.total();
+  }
+
+  // Now we have the collated name-count map data: we need to vectorize and
+  // sort. We define the pair with the count first as std::pair::operator<
+  // prioritizes its first element over its second.
+  using LookupCount = std::pair<uint64_t, absl::string_view>;
+  std::vector<LookupCount> lookup_data;
+  lookup_data.reserve(name_count_map.size());
+  for (const auto& iter : name_count_map) {
+    lookup_data.emplace_back(LookupCount(iter.second, iter.first));
+  }
+  std::sort(lookup_data.begin(), lookup_data.end());
+  for (const LookupCount& lookup_count : lookup_data) {
+    iter(lookup_count.second, lookup_count.first);
+  }
+  return total;
+}
+
+void SymbolTableImpl::setRecentLookupCapacity(uint64_t capacity) {
+  {
+    Thread::LockGuard lock(stat_name_set_mutex_);
+    for (StatNameSet* stat_name_set : stat_name_sets_) {
+      stat_name_set->setRecentLookupCapacity(capacity);
+    }
+  }
+
+  {
+    Thread::LockGuard lock(lock_);
+    recent_lookups_.setCapacity(capacity);
+  }
+}
+
+void SymbolTableImpl::clearRecentLookups() {
+  {
+    Thread::LockGuard lock(stat_name_set_mutex_);
+    for (StatNameSet* stat_name_set : stat_name_sets_) {
+      stat_name_set->clearRecentLookups();
+    }
+  }
+  {
+    Thread::LockGuard lock(lock_);
+    recent_lookups_.clear();
+  }
+}
+
+uint64_t SymbolTableImpl::recentLookupCapacity() const {
+  Thread::LockGuard lock(lock_);
+  return recent_lookups_.capacity();
+}
+
+StatNameSetPtr SymbolTableImpl::makeSet(absl::string_view name) {
+  const uint64_t capacity = recentLookupCapacity();
+  // make_unique does not work with private ctor, even though SymbolTableImpl is a friend.
+  StatNameSetPtr stat_name_set(new StatNameSet(*this, name));
+  stat_name_set->setRecentLookupCapacity(capacity);
+  {
+    Thread::LockGuard lock(stat_name_set_mutex_);
+    stat_name_sets_.insert(stat_name_set.get());
+  }
+  return stat_name_set;
+}
+
+void SymbolTableImpl::forgetSet(StatNameSet& stat_name_set) {
+  Thread::LockGuard lock(stat_name_set_mutex_);
+  stat_name_sets_.erase(&stat_name_set);
+}
+
 Symbol SymbolTableImpl::toSymbol(absl::string_view sv) {
   Symbol result;
   auto encode_find = encode_map_.find(sv);
@@ -215,8 +304,8 @@ Symbol SymbolTableImpl::toSymbol(absl::string_view sv) {
     // a string_view pointing to it in the encode_map_. This allows us to only
     // store the string once. We use unique_ptr so copies are not made as
     // flat_hash_map moves values around.
-    auto str = std::make_unique<std::string>(std::string(sv));
-    auto encode_insert = encode_map_.insert({*str, SharedSymbol(next_symbol_)});
+    InlineStringPtr str = InlineString::create(sv);
+    auto encode_insert = encode_map_.insert({str->toStringView(), SharedSymbol(next_symbol_)});
     ASSERT(encode_insert.second);
     auto decode_insert = decode_map_.insert({next_symbol_, std::move(str)});
     ASSERT(decode_insert.second);
@@ -236,7 +325,7 @@ absl::string_view SymbolTableImpl::fromSymbol(const Symbol symbol) const
     EXCLUSIVE_LOCKS_REQUIRED(lock_) {
   auto search = decode_map_.find(symbol);
   RELEASE_ASSERT(search != decode_map_.end(), "no such symbol");
-  return {*search->second};
+  return search->second->toStringView();
 }
 
 void SymbolTableImpl::newSymbol() EXCLUSIVE_LOCKS_REQUIRED(lock_) {
@@ -255,8 +344,8 @@ bool SymbolTableImpl::lessThan(const StatName& a, const StatName& b) const {
   // If this becomes a performance bottleneck (e.g. during sorting), we could
   // provide an iterator-like interface for incrementally decoding the symbols
   // without allocating memory.
-  SymbolVec av = Encoding::decodeSymbols(a.data(), a.dataSize());
-  SymbolVec bv = Encoding::decodeSymbols(b.data(), b.dataSize());
+  const SymbolVec av = Encoding::decodeSymbols(a.data(), a.dataSize());
+  const SymbolVec bv = Encoding::decodeSymbols(b.data(), b.dataSize());
 
   // Calling fromSymbol requires holding the lock, as it needs read-access to
   // the maps that are written when adding new symbols.
@@ -279,14 +368,15 @@ void SymbolTableImpl::debugPrint() const {
   }
   std::sort(symbols.begin(), symbols.end());
   for (Symbol symbol : symbols) {
-    std::string& token = *decode_map_.find(symbol)->second;
-    const SharedSymbol& shared_symbol = encode_map_.find(token)->second;
-    ENVOY_LOG_MISC(info, "{}: '{}' ({})", symbol, token, shared_symbol.ref_count_);
+    const InlineString& token = *decode_map_.find(symbol)->second;
+    const SharedSymbol& shared_symbol = encode_map_.find(token.toStringView())->second;
+    ENVOY_LOG_MISC(info, "{}: '{}' ({})", symbol, token.toStringView(), shared_symbol.ref_count_);
   }
 }
 #endif
 
 SymbolTable::StoragePtr SymbolTableImpl::encode(absl::string_view name) {
+  ASSERT(!absl::EndsWith(name, "."));
   Encoding encoding;
   addTokensToEncoding(name, encoding);
   auto bytes = std::make_unique<Storage>(encoding.bytesRequired());
@@ -298,7 +388,7 @@ StatNameStorage::StatNameStorage(absl::string_view name, SymbolTable& table)
     : bytes_(table.encode(name)) {}
 
 StatNameStorage::StatNameStorage(StatName src, SymbolTable& table) {
-  uint64_t size = src.size();
+  const uint64_t size = src.size();
   bytes_ = std::make_unique<SymbolTable::Storage>(size);
   src.copyToStorage(bytes_.get());
   table.incRefCount(statName());
@@ -316,6 +406,20 @@ void StatNameStorage::free(SymbolTable& table) {
   table.free(statName());
   bytes_.reset();
 }
+
+void StatNamePool::clear() {
+  for (StatNameStorage& storage : storage_vector_) {
+    storage.free(symbol_table_);
+  }
+  storage_vector_.clear();
+}
+
+uint8_t* StatNamePool::addReturningStorage(absl::string_view str) {
+  storage_vector_.push_back(Stats::StatNameStorage(str, symbol_table_));
+  return storage_vector_.back().bytes();
+}
+
+StatName StatNamePool::add(absl::string_view str) { return StatName(addReturningStorage(str)); }
 
 StatNameStorageSet::~StatNameStorageSet() {
   // free() must be called before destructing StatNameStorageSet to decrement
@@ -347,7 +451,7 @@ void StatNameStorageSet::free(SymbolTable& symbol_table) {
   }
 }
 
-SymbolTable::StoragePtr SymbolTableImpl::join(const std::vector<StatName>& stat_names) const {
+SymbolTable::StoragePtr SymbolTableImpl::join(const StatNameVec& stat_names) const {
   uint64_t num_bytes = 0;
   for (StatName stat_name : stat_names) {
     num_bytes += stat_name.dataSize();
@@ -355,9 +459,9 @@ SymbolTable::StoragePtr SymbolTableImpl::join(const std::vector<StatName>& stat_
   auto bytes = std::make_unique<Storage>(num_bytes + StatNameSizeEncodingBytes);
   uint8_t* p = writeLengthReturningNext(num_bytes, bytes.get());
   for (StatName stat_name : stat_names) {
-    num_bytes = stat_name.dataSize();
-    memcpy(p, stat_name.data(), num_bytes);
-    p += num_bytes;
+    const uint64_t stat_name_bytes = stat_name.dataSize();
+    memcpy(p, stat_name.data(), stat_name_bytes);
+    p += stat_name_bytes;
   }
   return bytes;
 }
@@ -396,10 +500,10 @@ void SymbolTableImpl::populateList(const absl::string_view* names, uint32_t num_
 StatNameList::~StatNameList() { ASSERT(!populated()); }
 
 void StatNameList::iterate(const std::function<bool(StatName)>& f) const {
-  uint8_t* p = &storage_[0];
-  uint32_t num_elements = *p++;
+  const uint8_t* p = &storage_[0];
+  const uint32_t num_elements = *p++;
   for (uint32_t i = 0; i < num_elements; ++i) {
-    StatName stat_name(p);
+    const StatName stat_name(p);
     p += stat_name.size();
     if (!f(stat_name)) {
       break;
@@ -413,6 +517,68 @@ void StatNameList::clear(SymbolTable& symbol_table) {
     return true;
   });
   storage_.reset();
+}
+
+StatNameSet::StatNameSet(SymbolTable& symbol_table, absl::string_view name)
+    : name_(std::string(name)), symbol_table_(symbol_table), pool_(symbol_table) {
+  builtin_stat_names_[""] = StatName();
+}
+
+StatNameSet::~StatNameSet() { symbol_table_.forgetSet(*this); }
+
+void StatNameSet::rememberBuiltin(absl::string_view str) {
+  StatName stat_name;
+  {
+    absl::MutexLock lock(&mutex_);
+    stat_name = pool_.add(str);
+  }
+  builtin_stat_names_[str] = stat_name;
+}
+
+StatName StatNameSet::getBuiltin(absl::string_view token, StatName fallback) {
+  // If token was recorded as a built-in during initialization, we can
+  // service this request lock-free.
+  const auto iter = builtin_stat_names_.find(token);
+  if (iter != builtin_stat_names_.end()) {
+    return iter->second;
+  }
+  return fallback;
+}
+
+StatName StatNameSet::getDynamic(absl::string_view token) {
+  // We duplicate most of the getBuiltin implementation so that we can detect
+  // the difference between "not found" and "found empty stat name".
+  const auto iter = builtin_stat_names_.find(token);
+  if (iter != builtin_stat_names_.end()) {
+    return iter->second;
+  }
+
+  {
+    // Other tokens require holding a lock for our local cache.
+    absl::MutexLock lock(&mutex_);
+    Stats::StatName& stat_name_ref = dynamic_stat_names_[token];
+    if (stat_name_ref.empty()) { // Note that builtin_stat_names_ already has one for "".
+      stat_name_ref = pool_.add(token);
+      recent_lookups_.lookup(token);
+    }
+    return stat_name_ref;
+  }
+}
+
+uint64_t StatNameSet::getRecentLookups(const RecentLookups::IterFn& iter) const {
+  absl::MutexLock lock(&mutex_);
+  recent_lookups_.forEach(iter);
+  return recent_lookups_.total();
+}
+
+void StatNameSet::clearRecentLookups() {
+  absl::MutexLock lock(&mutex_);
+  recent_lookups_.clear();
+}
+
+void StatNameSet::setRecentLookupCapacity(uint64_t capacity) {
+  absl::MutexLock lock(&mutex_);
+  recent_lookups_.setCapacity(capacity);
 }
 
 } // namespace Stats

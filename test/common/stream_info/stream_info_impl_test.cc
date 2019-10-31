@@ -192,13 +192,27 @@ TEST_F(StreamInfoImplTest, DynamicMetadataTest) {
   EXPECT_EQ("test_value",
             Config::Metadata::metadataValue(stream_info.dynamicMetadata(), "com.test", "test_key")
                 .string_value());
-  ProtobufTypes::String json;
+  std::string json;
   const auto test_struct = stream_info.dynamicMetadata().filter_metadata().at("com.test");
   const auto status = Protobuf::util::MessageToJsonString(test_struct, &json);
   EXPECT_TRUE(status.ok());
   // check json contains the key and values we set
   EXPECT_TRUE(json.find("\"test_key\":\"test_value\"") != std::string::npos);
   EXPECT_TRUE(json.find("\"another_key\":\"another_value\"") != std::string::npos);
+}
+
+TEST_F(StreamInfoImplTest, DumpStateTest) {
+  StreamInfoImpl stream_info(Http::Protocol::Http2, test_time_.timeSystem());
+  std::string prefix = "";
+
+  for (int i = 0; i < 7; ++i) {
+    std::stringstream out;
+    stream_info.dumpState(out, i);
+    std::string state = out.str();
+    EXPECT_TRUE(absl::StartsWith(state, prefix));
+    EXPECT_THAT(state, testing::HasSubstr("protocol_: 2"));
+    prefix = prefix + "  ";
+  }
 }
 
 } // namespace

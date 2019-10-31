@@ -27,7 +27,18 @@ envoy_cc_library(
         "//include/envoy/stats:stats_interface",
         "//include/envoy/thread_local:thread_local_interface",
         "//include/envoy/upstream:cluster_manager_interface",
-        "@envoy_api//envoy/config/filter/network/http_connection_manager/v2:http_connection_manager_cc",
+        "@envoy_api//envoy/config/filter/network/http_connection_manager/v2:pkg_cc_proto",
+    ],
+)
+
+envoy_cc_library(
+    name = "route_config_update_info_interface",
+    hdrs = ["route_config_update_receiver.h"],
+    external_deps = ["abseil_optional"],
+    deps = [
+        ":rds_interface",
+        "//include/envoy/common:time_interface",
+        "//source/common/protobuf",
     ],
 )
 
@@ -37,16 +48,28 @@ envoy_cc_library(
     external_deps = ["abseil_optional"],
     deps = [
         "//include/envoy/access_log:access_log_interface",
+        "//include/envoy/common:matchers_interface",
         "//include/envoy/config:typed_metadata_interface",
         "//include/envoy/http:codec_interface",
         "//include/envoy/http:codes_interface",
+        "//include/envoy/http:hash_policy_interface",
         "//include/envoy/http:header_map_interface",
         "//include/envoy/tracing:http_tracer_interface",
         "//include/envoy/upstream:resource_manager_interface",
         "//include/envoy/upstream:retry_interface",
         "//source/common/protobuf",
         "//source/common/protobuf:utility_lib",
-        "@envoy_api//envoy/api/v2:rds_cc",
+        "@envoy_api//envoy/api/v2:pkg_cc_proto",
+    ],
+)
+
+envoy_cc_library(
+    name = "scopes_interface",
+    hdrs = ["scopes.h"],
+    deps = [
+        ":router_interface",
+        "//include/envoy/config:config_provider_interface",
+        "//include/envoy/http:header_map_interface",
     ],
 )
 

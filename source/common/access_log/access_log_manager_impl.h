@@ -15,14 +15,13 @@
 
 namespace Envoy {
 
-// clang-format off
 #define ACCESS_LOG_FILE_STATS(COUNTER, GAUGE)                                                      \
-  COUNTER(write_buffered)                                                                          \
-  COUNTER(write_completed)                                                                         \
   COUNTER(flushed_by_timer)                                                                        \
   COUNTER(reopen_failed)                                                                           \
-  GAUGE  (write_total_buffered)
-// clang-format on
+  COUNTER(write_buffered)                                                                          \
+  COUNTER(write_completed)                                                                         \
+  COUNTER(write_failed)                                                                            \
+  GAUGE(write_total_buffered, Accumulate)
 
 struct AccessLogFileStats {
   ACCESS_LOG_FILE_STATS(GENERATE_COUNTER_STRUCT, GENERATE_GAUGE_STRUCT)
@@ -36,9 +35,9 @@ public:
                        Event::Dispatcher& dispatcher, Thread::BasicLockable& lock,
                        Stats::Store& stats_store)
       : file_flush_interval_msec_(file_flush_interval_msec), api_(api), dispatcher_(dispatcher),
-        lock_(lock), file_stats_{ACCESS_LOG_FILE_STATS(
-                         POOL_COUNTER_PREFIX(stats_store, "access_log_file."),
-                         POOL_GAUGE_PREFIX(stats_store, "access_log_file."))} {}
+        lock_(lock), file_stats_{
+                         ACCESS_LOG_FILE_STATS(POOL_COUNTER_PREFIX(stats_store, "filesystem."),
+                                               POOL_GAUGE_PREFIX(stats_store, "filesystem."))} {}
 
   // AccessLog::AccessLogManager
   void reopen() override;
@@ -56,17 +55,17 @@ private:
 /**
  * This is a file implementation geared for writing out access logs. It turn out that in certain
  * cases even if a standard file is opened with O_NONBLOCK, the kernel can still block when writing.
- * This implementation uses a flush thread per file, with the idea there there aren't that many
+ * This implementation uses a flush thread per file, with the idea there aren't that many
  * files. If this turns out to be a good implementation we can potentially have a single flush
  * thread that flushes all files, but we will start with this.
  */
 class AccessLogFileImpl : public AccessLogFile {
 public:
   AccessLogFileImpl(Filesystem::FilePtr&& file, Event::Dispatcher& dispatcher,
-                    Thread::BasicLockable& lock, AccessLogFileStats& stats_,
+                    Thread::BasicLockable& lock, AccessLogFileStats& stats,
                     std::chrono::milliseconds flush_interval_msec,
                     Thread::ThreadFactory& thread_factory);
-  ~AccessLogFileImpl();
+  ~AccessLogFileImpl() override;
 
   // AccessLog::AccessLogFile
   void write(absl::string_view data) override;
@@ -84,6 +83,9 @@ private:
   void flushThreadFunc();
   void open();
   void createFlushStructures();
+
+  // return default flags set which used by open
+  static Filesystem::FlagSet defaultFlags();
 
   // Minimum size before the flush thread will be told to flush.
   static const uint64_t MIN_FLUSH_SIZE = 1024 * 64;
@@ -112,12 +114,12 @@ private:
   std::atomic<bool> flush_thread_exit_{};
   std::atomic<bool> reopen_file_{};
   Buffer::OwnedImpl
-      flush_buffer_ GUARDED_BY(write_lock_); // This buffer is used by multiple threads. It gets
-                                             // filled and then flushed either when max size is
-                                             // reached or when a timer fires.
-  // TODO(jmarantz): this should be GUARDED_BY(flush_lock_) but the analysis cannot poke through
-  // the std::make_unique assignment. I do not believe it's possible to annotate this properly now
-  // due to limitations in the clang thread annotation analysis.
+      flush_buffer_ ABSL_GUARDED_BY(write_lock_); // This buffer is used by multiple threads. It
+                                                  // gets filled and then flushed either when max
+                                                  // size is reached or when a timer fires.
+  // TODO(jmarantz): this should be ABSL_GUARDED_BY(flush_lock_) but the analysis cannot poke
+  // through the std::make_unique assignment. I do not believe it's possible to annotate this
+  // properly now due to limitations in the clang thread annotation analysis.
   Buffer::OwnedImpl about_to_write_buffer_; // This buffer is used only by the flush thread. Data
                                             // is moved from flush_buffer_ under lock, and then
                                             // the lock is released so that flush_buffer_ can

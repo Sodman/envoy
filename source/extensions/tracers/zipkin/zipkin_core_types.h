@@ -6,11 +6,14 @@
 #include "envoy/common/time.h"
 #include "envoy/network/address.h"
 
+#include "common/common/assert.h"
 #include "common/common/hex.h"
 
 #include "extensions/tracers/zipkin/tracer_interface.h"
 #include "extensions/tracers/zipkin/util.h"
 
+#include "absl/strings/str_cat.h"
+#include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
 
 namespace Envoy {
@@ -27,7 +30,7 @@ public:
   /**
    * Destructor.
    */
-  virtual ~ZipkinBase() {}
+  virtual ~ZipkinBase() = default;
 
   /**
    * All classes defining Zipkin abstractions need to implement this method to convert
@@ -55,7 +58,7 @@ public:
   /**
    * Default constructor. Creates an empty Endpoint.
    */
-  Endpoint() : service_name_(), address_(nullptr) {}
+  Endpoint() : address_(nullptr) {}
 
   /**
    * Constructor that initializes an endpoint with the given attributes.
@@ -117,7 +120,7 @@ public:
   /**
    * Default constructor. Creates an empty annotation.
    */
-  Annotation() : timestamp_(0), value_() {}
+  Annotation() = default;
 
   /**
    * Constructor that creates an annotation based on the given parameters.
@@ -186,7 +189,7 @@ public:
   const std::string toJson() override;
 
 private:
-  uint64_t timestamp_;
+  uint64_t timestamp_{0};
   std::string value_;
   absl::optional<Endpoint> endpoint_;
 };
@@ -216,7 +219,7 @@ public:
   /**
    * Default constructor. Creates an empty binary annotation.
    */
-  BinaryAnnotation() : key_(), value_(), annotation_type_(STRING) {}
+  BinaryAnnotation() : annotation_type_(STRING) {}
 
   /**
    * Constructor that creates a binary annotation based on the given parameters.
@@ -224,7 +227,7 @@ public:
    * @param key The key name of the annotation.
    * @param value The value associated with the key.
    */
-  BinaryAnnotation(const std::string& key, const std::string& value)
+  BinaryAnnotation(absl::string_view key, absl::string_view value)
       : key_(key), value_(value), annotation_type_(STRING) {}
 
   /**
@@ -235,7 +238,7 @@ public:
   /**
    * Sets the binary's annotation type.
    */
-  void setAnnotationType(AnnotationType annotationType) { annotation_type_ = annotationType; }
+  void setAnnotationType(AnnotationType annotation_type) { annotation_type_ = annotation_type; }
 
   /**
    * @return the annotation's endpoint attribute.
@@ -287,10 +290,10 @@ private:
   std::string key_;
   std::string value_;
   absl::optional<Endpoint> endpoint_;
-  AnnotationType annotation_type_;
+  AnnotationType annotation_type_{};
 };
 
-typedef std::unique_ptr<Span> SpanPtr;
+using SpanPtr = std::unique_ptr<Span>;
 
 /**
  * Represents a Zipkin span. This class is based on Zipkin's Thrift definition of a span.
@@ -306,7 +309,7 @@ public:
    * Default constructor. Creates an empty span.
    */
   explicit Span(TimeSource& time_source)
-      : trace_id_(0), name_(), id_(0), debug_(false), sampled_(false), monotonic_start_time_(0),
+      : trace_id_(0), id_(0), debug_(false), sampled_(false), monotonic_start_time_(0),
         tracer_(nullptr), time_source_(time_source) {}
 
   /**
@@ -443,6 +446,11 @@ public:
   const std::string idAsHexString() const { return Hex::uint64ToHex(id_); }
 
   /**
+   * @return the span's id as a byte string.
+   */
+  const std::string idAsByteString() const { return Util::toByteString(id_); }
+
+  /**
    * @return the span's name.
    */
   const std::string& name() const { return name_; }
@@ -457,6 +465,14 @@ public:
    */
   const std::string parentIdAsHexString() const {
     return parent_id_ ? Hex::uint64ToHex(parent_id_.value()) : EMPTY_HEX_STRING_;
+  }
+
+  /**
+   * @return the span's parent id as a byte string.
+   */
+  const std::string parentIdAsByteString() const {
+    ASSERT(parent_id_);
+    return Util::toByteString(parent_id_.value());
   }
 
   /**
@@ -489,8 +505,19 @@ public:
    */
   const std::string traceIdAsHexString() const {
     return trace_id_high_.has_value()
-               ? Hex::uint64ToHex(trace_id_high_.value()) + Hex::uint64ToHex(trace_id_)
+               ? absl::StrCat(Hex::uint64ToHex(trace_id_high_.value()), Hex::uint64ToHex(trace_id_))
                : Hex::uint64ToHex(trace_id_);
+  }
+
+  /**
+   * @return the span's trace id as a byte string.
+   */
+  const std::string traceIdAsByteString() const {
+    // https://github.com/openzipkin/zipkin-api/blob/v0.2.1/zipkin.proto#L60-L61.
+    return trace_id_high_.has_value()
+               ? absl::StrCat(Util::toBigEndianByteString(trace_id_high_.value()),
+                              Util::toBigEndianByteString(trace_id_))
+               : Util::toBigEndianByteString(trace_id_);
   }
 
   /**
@@ -547,7 +574,7 @@ public:
    * @param name The binary annotation's key.
    * @param value The binary annotation's value.
    */
-  void setTag(const std::string& name, const std::string& value);
+  void setTag(absl::string_view name, absl::string_view value);
 
   /**
    * Adds an annotation to the span

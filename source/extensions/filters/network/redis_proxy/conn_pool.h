@@ -21,7 +21,7 @@ namespace ConnPool {
  */
 class Instance {
 public:
-  virtual ~Instance() {}
+  virtual ~Instance() = default;
 
   /**
    * Makes a redis request.
@@ -48,9 +48,17 @@ public:
   virtual Common::Redis::Client::PoolRequest*
   makeRequestToHost(const std::string& host_address, const Common::Redis::RespValue& request,
                     Common::Redis::Client::PoolCallbacks& callbacks) PURE;
+
+  /**
+   * Notify the redirection manager singleton that a redirection error has been received from an
+   * upstream server associated with the pool's associated cluster.
+   * @return bool true if a cluster's registered callback with the redirection manager is scheduled
+   * to be called from the main thread dispatcher, false otherwise.
+   */
+  virtual bool onRedirection() PURE;
 };
 
-typedef std::shared_ptr<Instance> InstanceSharedPtr;
+using InstanceSharedPtr = std::shared_ptr<Instance>;
 
 } // namespace ConnPool
 } // namespace RedisProxy

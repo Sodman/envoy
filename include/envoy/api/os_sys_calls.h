@@ -21,7 +21,7 @@ namespace Api {
 
 class OsSysCalls {
 public:
-  virtual ~OsSysCalls() {}
+  virtual ~OsSysCalls() = default;
 
   /**
    * @see bind (man 2 bind)
@@ -53,21 +53,17 @@ public:
    */
   virtual SysCallSizeResult recvfrom(int sockfd, void* buffer, size_t length, int flags,
                                      struct sockaddr* addr, socklen_t* addrlen) PURE;
+
+  /**
+   * @see recvmsg (man 2 recvmsg)
+   */
+  virtual SysCallSizeResult recvmsg(int sockfd, struct msghdr* msg, int flags) PURE;
+
   /**
    * Release all resources allocated for fd.
    * @return zero on success, -1 returned otherwise.
    */
   virtual SysCallIntResult close(int fd) PURE;
-
-  /**
-   * @see shm_open (man 3 shm_open)
-   */
-  virtual SysCallIntResult shmOpen(const char* name, int oflag, mode_t mode) PURE;
-
-  /**
-   * @see shm_unlink (man 3 shm_unlink)
-   */
-  virtual SysCallIntResult shmUnlink(const char* name) PURE;
 
   /**
    * @see man 2 ftruncate
@@ -101,9 +97,25 @@ public:
    * @see man 2 socket
    */
   virtual SysCallIntResult socket(int domain, int type, int protocol) PURE;
+
+  /**
+   * @see man 2 sendto
+   */
+  virtual SysCallSizeResult sendto(int fd, const void* buffer, size_t size, int flags,
+                                   const sockaddr* addr, socklen_t addrlen) PURE;
+
+  /**
+   * @see man 2 sendmsg
+   */
+  virtual SysCallSizeResult sendmsg(int fd, const msghdr* message, int flags) PURE;
+
+  /**
+   * @see man 2 getsockname
+   */
+  virtual SysCallIntResult getsockname(int sockfd, sockaddr* addr, socklen_t* addrlen) PURE;
 };
 
-typedef std::unique_ptr<OsSysCalls> OsSysCallsPtr;
+using OsSysCallsPtr = std::unique_ptr<OsSysCalls>;
 
 } // namespace Api
 } // namespace Envoy

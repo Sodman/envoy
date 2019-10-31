@@ -27,6 +27,7 @@
 #include "envoy/runtime/runtime.h"
 #include "envoy/secret/secret_manager.h"
 #include "envoy/server/transport_socket_config.h"
+#include "envoy/singleton/manager.h"
 #include "envoy/ssl/context_manager.h"
 #include "envoy/stats/scope.h"
 #include "envoy/thread_local/thread_local.h"
@@ -39,6 +40,7 @@
 #include "common/common/callback_impl.h"
 #include "common/common/enum_to_int.h"
 #include "common/common/logger.h"
+#include "common/config/datasource.h"
 #include "common/config/metadata.h"
 #include "common/config/well_known_names.h"
 #include "common/network/address_impl.h"
@@ -50,12 +52,17 @@
 #include "common/upstream/resource_manager_impl.h"
 #include "common/upstream/upstream_impl.h"
 
+#include "source/extensions/clusters/redis/redis_cluster_lb.h"
+
 #include "server/transport_socket_config_impl.h"
 
 #include "extensions/clusters/well_known_names.h"
+#include "extensions/common/redis/redirection_mgr_impl.h"
 #include "extensions/filters/network/common/redis/client.h"
 #include "extensions/filters/network/common/redis/client_impl.h"
 #include "extensions/filters/network/common/redis/codec.h"
+#include "extensions/filters/network/common/redis/utility.h"
+#include "extensions/filters/network/redis_proxy/config.h"
 
 namespace Envoy {
 namespace Extensions {
@@ -77,29 +84,25 @@ namespace Redis {
  * the `CLUSTER SLOTS command <https://redis.io/commands/cluster-slots>`_, and the responses and
  * failure cases.
  *
- * The topology is stored in cluster_slots_map_. According to the
- * `Redis Cluster Spec <https://redis.io/topics/cluster-spec#keys-distribution-model`_, the key
- * space is split into a fixed size 16384 slots. The current implementation uses a fixed size
- * std::array() of shared_ptr pointing to the master host. This has a fixed cpu and memory cost and
- * provide a fast lookup constant time lookup similar to Maglev. This will be used by the redis
- * proxy filter for load balancing purpose.
+ * Once the topology is fetched from Redis, the cluster will update the
+ * RedisClusterLoadBalancerFactory, which will be used by the redis proxy filter for load balancing
+ * purpose.
  */
-
-typedef std::array<Upstream::HostSharedPtr, 16384> SlotArray;
 
 class RedisCluster : public Upstream::BaseDynamicClusterImpl {
 public:
   RedisCluster(const envoy::api::v2::Cluster& cluster,
-               const envoy::config::cluster::redis::RedisClusterConfig& redisCluster,
+               const envoy::config::cluster::redis::RedisClusterConfig& redis_cluster,
                NetworkFilters::Common::Redis::Client::ClientFactory& client_factory,
-               Upstream::ClusterManager& clusterManager, Runtime::Loader& runtime,
+               Upstream::ClusterManager& cluster_manager, Runtime::Loader& runtime, Api::Api& api,
                Network::DnsResolverSharedPtr dns_resolver,
                Server::Configuration::TransportSocketFactoryContext& factory_context,
-               Stats::ScopePtr&& stats_scope, bool added_via_api);
+               Stats::ScopePtr&& stats_scope, bool added_via_api,
+               ClusterSlotUpdateCallBackSharedPtr factory);
 
   struct ClusterSlotsRequest : public Extensions::NetworkFilters::Common::Redis::RespValue {
   public:
-    ClusterSlotsRequest() : Extensions::NetworkFilters::Common::Redis::RespValue() {
+    ClusterSlotsRequest() {
       type(Extensions::NetworkFilters::Common::Redis::RespType::Array);
       std::vector<NetworkFilters::Common::Redis::RespValue> values(2);
       values[0].type(NetworkFilters::Common::Redis::RespType::BulkString);
@@ -121,16 +124,9 @@ private:
   void updateAllHosts(const Upstream::HostVector& hosts_added,
                       const Upstream::HostVector& hosts_removed, uint32_t priority);
 
-  struct ClusterSlot {
-    ClusterSlot(int64_t start, int64_t end, Network::Address::InstanceConstSharedPtr master)
-        : start_(start), end_(end), master_(std::move(master)) {}
+  void onClusterSlotUpdate(ClusterSlotsPtr&&);
 
-    int64_t start_;
-    int64_t end_;
-    Network::Address::InstanceConstSharedPtr master_;
-  };
-
-  void onClusterSlotUpdate(const std::vector<ClusterSlot>&);
+  void reloadHealthyHostsHelper(const Upstream::HostSharedPtr& host) override;
 
   const envoy::api::v2::endpoint::LocalityLbEndpoints& localityLbEndpoint() const {
     // Always use the first endpoint.
@@ -163,24 +159,21 @@ private:
 
   // Resolves the discovery endpoint.
   struct DnsDiscoveryResolveTarget {
-    DnsDiscoveryResolveTarget(
-        RedisCluster& parent, const std::string& dns_address, const uint32_t port,
-        const envoy::api::v2::endpoint::LocalityLbEndpoints& locality_lb_endpoint,
-        const envoy::api::v2::endpoint::LbEndpoint& lb_endpoint);
+    DnsDiscoveryResolveTarget(RedisCluster& parent, const std::string& dns_address,
+                              const uint32_t port);
 
     ~DnsDiscoveryResolveTarget();
 
-    void startResolve();
+    void startResolveDns();
 
     RedisCluster& parent_;
     Network::ActiveDnsQuery* active_query_{};
     const std::string dns_address_;
     const uint32_t port_;
-    const envoy::api::v2::endpoint::LocalityLbEndpoints locality_lb_endpoint_;
-    const envoy::api::v2::endpoint::LbEndpoint lb_endpoint_;
+    Event::TimerPtr resolve_timer_;
   };
 
-  typedef std::unique_ptr<DnsDiscoveryResolveTarget> DnsDiscoveryResolveTargetPtr;
+  using DnsDiscoveryResolveTargetPtr = std::unique_ptr<DnsDiscoveryResolveTarget>;
 
   struct RedisDiscoverySession;
 
@@ -197,7 +190,7 @@ private:
     Extensions::NetworkFilters::Common::Redis::Client::ClientPtr client_;
   };
 
-  typedef std::unique_ptr<RedisDiscoveryClient> RedisDiscoveryClientPtr;
+  using RedisDiscoveryClientPtr = std::unique_ptr<RedisDiscoveryClient>;
 
   struct RedisDiscoverySession
       : public Extensions::NetworkFilters::Common::Redis::Client::Config,
@@ -205,14 +198,12 @@ private:
     RedisDiscoverySession(RedisCluster& parent,
                           NetworkFilters::Common::Redis::Client::ClientFactory& client_factory);
 
-    ~RedisDiscoverySession();
+    ~RedisDiscoverySession() override;
 
-    void registerDiscoveryAddress(
-        const std::list<Network::Address::InstanceConstSharedPtr>& address_list,
-        const uint32_t port);
+    void registerDiscoveryAddress(std::list<Network::DnsResponse>&& response, const uint32_t port);
 
     // Start discovery against a random host from existing hosts
-    void startResolve();
+    void startResolveRedis();
 
     // Extensions::NetworkFilters::Common::Redis::Client::Config
     bool disableOutlierEvents() const override { return true; }
@@ -224,6 +215,15 @@ private:
     bool enableRedirection() const override { return false; }
     uint32_t maxBufferSizeBeforeFlush() const override { return 0; }
     std::chrono::milliseconds bufferFlushTimeoutInMs() const override { return buffer_timeout_; }
+    uint32_t maxUpstreamUnknownConnections() const override { return 0; }
+    bool enableCommandStats() const override { return false; }
+    // For any readPolicy other than Master, the RedisClientFactory will send a READONLY command
+    // when establishing a new connection. Since we're only using this for making the "cluster
+    // slots" commands, the READONLY command is not relevant in this context. We're setting it to
+    // Master to avoid the additional READONLY command.
+    Extensions::NetworkFilters::Common::Redis::Client::ReadPolicy readPolicy() const override {
+      return Extensions::NetworkFilters::Common::Redis::Client::ReadPolicy::Master;
+    }
 
     // Extensions::NetworkFilters::Common::Redis::Client::PoolCallbacks
     void onResponse(NetworkFilters::Common::Redis::RespValuePtr&& value) override;
@@ -231,6 +231,9 @@ private:
     // Note: Below callback isn't used in topology updates
     bool onRedirection(const NetworkFilters::Common::Redis::RespValue&) override { return true; }
     void onUnexpectedResponse(const NetworkFilters::Common::Redis::RespValuePtr&);
+
+    Network::Address::InstanceConstSharedPtr
+    ProcessCluster(const NetworkFilters::Common::Redis::RespValue& value);
 
     RedisCluster& parent_;
     Event::Dispatcher& dispatcher_;
@@ -243,11 +246,14 @@ private:
     Event::TimerPtr resolve_timer_;
     NetworkFilters::Common::Redis::Client::ClientFactory& client_factory_;
     const std::chrono::milliseconds buffer_timeout_;
+    NetworkFilters::Common::Redis::RedisCommandStatsSharedPtr redis_command_stats_;
   };
 
   Upstream::ClusterManager& cluster_manager_;
   const std::chrono::milliseconds cluster_refresh_rate_;
   const std::chrono::milliseconds cluster_refresh_timeout_;
+  const std::chrono::milliseconds redirect_refresh_interval_;
+  const uint32_t redirect_refresh_threshold_;
   std::list<DnsDiscoveryResolveTargetPtr> dns_discovery_resolve_targets_;
   Event::Dispatcher& dispatcher_;
   Network::DnsResolverSharedPtr dns_resolver_;
@@ -256,11 +262,14 @@ private:
   const LocalInfo::LocalInfo& local_info_;
   Runtime::RandomGenerator& random_;
   RedisDiscoverySession redis_discovery_session_;
-  // The slot to master node map.
-  SlotArray cluster_slots_map_;
+  const ClusterSlotUpdateCallBackSharedPtr lb_factory_;
 
   Upstream::HostVector hosts_;
   Upstream::HostMap all_hosts_;
+
+  const std::string auth_password_;
+  const Common::Redis::RedirectionManagerSharedPtr redirection_manager_;
+  const Common::Redis::RedirectionManager::HandlePtr registration_handle_;
 };
 
 class RedisClusterFactory : public Upstream::ConfigurableClusterFactoryBase<
@@ -272,7 +281,8 @@ public:
 private:
   friend class RedisClusterTest;
 
-  Upstream::ClusterImplBaseSharedPtr createClusterWithConfig(
+  std::pair<Upstream::ClusterImplBaseSharedPtr, Upstream::ThreadAwareLoadBalancerPtr>
+  createClusterWithConfig(
       const envoy::api::v2::Cluster& cluster,
       const envoy::config::cluster::redis::RedisClusterConfig& proto_config,
       Upstream::ClusterFactoryContext& context,

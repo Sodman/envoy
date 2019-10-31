@@ -17,7 +17,7 @@ namespace ConnectionPool {
  */
 class Cancellable {
 public:
-  virtual ~Cancellable() {}
+  virtual ~Cancellable() = default;
 
   /**
    * Cancel the pending request.
@@ -41,7 +41,7 @@ enum class PoolFailureReason {
  */
 class Callbacks {
 public:
-  virtual ~Callbacks() {}
+  virtual ~Callbacks() = default;
 
   /**
    * Called when a pool error occurred and no connection could be acquired for making the request.
@@ -58,9 +58,11 @@ public:
    * @param encoder supplies the request encoder to use.
    * @param host supplies the description of the host that will carry the request. For logical
    *             connection pools the description may be different each time this is called.
+   * @param info supplies the stream info object associated with the upstream connection.
    */
   virtual void onPoolReady(Http::StreamEncoder& encoder,
-                           Upstream::HostDescriptionConstSharedPtr host) PURE;
+                           Upstream::HostDescriptionConstSharedPtr host,
+                           const StreamInfo::StreamInfo& info) PURE;
 };
 
 /**
@@ -68,7 +70,7 @@ public:
  */
 class Instance : public Event::DeferredDeletable {
 public:
-  virtual ~Instance() {}
+  ~Instance() override = default;
 
   /**
    * @return Http::Protocol Reports the protocol in use by this connection pool.
@@ -79,7 +81,7 @@ public:
    * Called when a connection pool has been drained of pending requests, busy connections, and
    * ready connections.
    */
-  typedef std::function<void()> DrainedCb;
+  using DrainedCb = std::function<void()>;
 
   /**
    * Register a callback that gets called when the connection pool is fully drained. No actual
@@ -114,11 +116,18 @@ public:
    *                      callbacks is called and the routine returns nullptr. NOTE: Once a callback
    *                      is called, the handle is no longer valid and any further cancellation
    *                      should be done by resetting the stream.
+   * @warning Do not call cancel() from the callbacks, as the request is implicitly canceled when
+   *          the callbacks are called.
    */
   virtual Cancellable* newStream(Http::StreamDecoder& response_decoder, Callbacks& callbacks) PURE;
+
+  /**
+   * @return Upstream::HostDescriptionConstSharedPtr the host for which connections are pooled.
+   */
+  virtual Upstream::HostDescriptionConstSharedPtr host() const PURE;
 };
 
-typedef std::unique_ptr<Instance> InstancePtr;
+using InstancePtr = std::unique_ptr<Instance>;
 
 } // namespace ConnectionPool
 } // namespace Http

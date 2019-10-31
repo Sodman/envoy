@@ -19,7 +19,7 @@ namespace Server {
 
 class AdminStream {
 public:
-  virtual ~AdminStream() {}
+  virtual ~AdminStream() = default;
 
   /**
    * @param end_stream set to false for streaming response. Default is true, which will
@@ -68,7 +68,7 @@ public:
  */
 class Admin {
 public:
-  virtual ~Admin() {}
+  virtual ~Admin() = default;
 
   /**
    * Callback for admin URL handlers.
@@ -80,11 +80,9 @@ public:
    * its data.
    * @return Http::Code the response code.
    */
-  typedef std::function<Http::Code(absl::string_view path_and_query,
-                                   Http::HeaderMap& response_headers, Buffer::Instance& response,
-                                   AdminStream& admin_stream)>
-
-      HandlerCb;
+  using HandlerCb =
+      std::function<Http::Code(absl::string_view path_and_query, Http::HeaderMap& response_headers,
+                               Buffer::Instance& response, AdminStream& admin_stream)>;
 
   /**
    * Add an admin handler.
@@ -123,9 +121,10 @@ public:
    * @param address network address to bind and listen on.
    * @param listener_scope stats scope for the listener being started,
    */
-  virtual void startHttpListener(const std::string& access_log_path_,
+  virtual void startHttpListener(const std::string& access_log_path,
                                  const std::string& address_out_path,
                                  Network::Address::InstanceConstSharedPtr address,
+                                 const Network::Socket::OptionsSharedPtr& socket_options,
                                  Stats::ScopePtr&& listener_scope) PURE;
 
   /**

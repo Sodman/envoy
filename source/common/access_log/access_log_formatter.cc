@@ -1,6 +1,7 @@
 #include "common/access_log/access_log_formatter.h"
 
 #include <cstdint>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,12 @@ static const std::string UnspecifiedValueString = "-";
 
 namespace {
 
+// Matches newline pattern in a StartTimeFormatter format string.
+const std::regex& getStartTimeNewlinePattern() {
+  CONSTRUCT_ON_FIRST_USE(std::regex, "%[-_0^#]*[1-9]*n");
+}
+const std::regex& getNewlinePattern() { CONSTRUCT_ON_FIRST_USE(std::regex, "\n"); }
+
 // Helper that handles the case when the ConnectionInfo is missing or if the desired value is
 // empty.
 StreamInfoFormatter::FieldExtractor sslConnectionInfoStringExtractor(
@@ -40,6 +47,22 @@ StreamInfoFormatter::FieldExtractor sslConnectionInfoStringExtractor(
     }
   };
 }
+
+// Helper that handles the case when the desired time field is empty.
+StreamInfoFormatter::FieldExtractor sslConnectionInfoStringTimeExtractor(
+    std::function<absl::optional<SystemTime>(const Ssl::ConnectionInfo& connection_info)>
+        time_extractor) {
+  return sslConnectionInfoStringExtractor(
+      [time_extractor](const Ssl::ConnectionInfo& connection_info) {
+        absl::optional<SystemTime> time = time_extractor(connection_info);
+        if (!time.has_value()) {
+          return UnspecifiedValueString;
+        }
+
+        return AccessLogDateTimeFormatter::fromTime(time.value());
+      });
+}
+
 } // namespace
 
 const std::string AccessLogFormatUtils::DEFAULT_FORMAT =
@@ -112,7 +135,7 @@ std::string JsonFormatterImpl::format(const Http::HeaderMap& request_headers,
     (*output_struct.mutable_fields())[pair.first] = string_value;
   }
 
-  ProtobufTypes::String log_line;
+  std::string log_line;
   const auto conversion_status = Protobuf::util::MessageToJsonString(output_struct, &log_line);
   if (!conversion_status.ok()) {
     log_line =
@@ -149,6 +172,11 @@ void AccessLogFormatParser::parseCommandHeader(const std::string& token, const s
     alternative_header = subs.front();
   } else {
     alternative_header = "";
+  }
+  // The main and alternative header should not contain invalid characters {NUL, LR, CF}.
+  if (std::regex_search(main_header, getNewlinePattern()) ||
+      std::regex_search(alternative_header, getNewlinePattern())) {
+    throw EnvoyException("Invalid header configuration. Format string contains newline.");
   }
 }
 
@@ -192,7 +220,7 @@ void AccessLogFormatParser::parseCommand(const std::string& token, const size_t 
   }
 }
 
-// TODO(derekargueta): #2967 - Rewrite AccessLogformatter with parser library & formal grammar
+// TODO(derekargueta): #2967 - Rewrite AccessLogFormatter with parser library & formal grammar
 std::vector<FormatterProviderPtr> AccessLogFormatParser::parse(const std::string& format) {
   std::string current_token;
   std::vector<FormatterProviderPtr> formatters;
@@ -219,7 +247,7 @@ std::vector<FormatterProviderPtr> AccessLogFormatParser::parse(const std::string
       pos += 1;
       int command_end_position = pos + token.length();
 
-      if (token.find("REQ(") == 0) {
+      if (absl::StartsWith(token, "REQ(")) {
         std::string main_header, alternative_header;
         absl::optional<size_t> max_length;
 
@@ -227,7 +255,7 @@ std::vector<FormatterProviderPtr> AccessLogFormatParser::parse(const std::string
 
         formatters.emplace_back(FormatterProviderPtr{
             new RequestHeaderFormatter(main_header, alternative_header, max_length)});
-      } else if (token.find("RESP(") == 0) {
+      } else if (absl::StartsWith(token, "RESP(")) {
         std::string main_header, alternative_header;
         absl::optional<size_t> max_length;
 
@@ -235,7 +263,7 @@ std::vector<FormatterProviderPtr> AccessLogFormatParser::parse(const std::string
 
         formatters.emplace_back(FormatterProviderPtr{
             new ResponseHeaderFormatter(main_header, alternative_header, max_length)});
-      } else if (token.find("TRAILER(") == 0) {
+      } else if (absl::StartsWith(token, "TRAILER(")) {
         std::string main_header, alternative_header;
         absl::optional<size_t> max_length;
 
@@ -243,7 +271,7 @@ std::vector<FormatterProviderPtr> AccessLogFormatParser::parse(const std::string
 
         formatters.emplace_back(FormatterProviderPtr{
             new ResponseTrailerFormatter(main_header, alternative_header, max_length)});
-      } else if (token.find(DYNAMIC_META_TOKEN) == 0) {
+      } else if (absl::StartsWith(token, DYNAMIC_META_TOKEN)) {
         std::string filter_namespace;
         absl::optional<size_t> max_length;
         std::vector<std::string> path;
@@ -252,13 +280,18 @@ std::vector<FormatterProviderPtr> AccessLogFormatParser::parse(const std::string
         parseCommand(token, start, ":", filter_namespace, path, max_length);
         formatters.emplace_back(
             FormatterProviderPtr{new DynamicMetadataFormatter(filter_namespace, path, max_length)});
-      } else if (token.find("START_TIME") == 0) {
+      } else if (absl::StartsWith(token, "START_TIME")) {
         const size_t parameters_length = pos + StartTimeParamStart + 1;
         const size_t parameters_end = command_end_position - parameters_length;
 
         const std::string args = token[StartTimeParamStart - 1] == '('
                                      ? token.substr(StartTimeParamStart, parameters_end)
                                      : "";
+        // Validate the input specifier here. The formatted string may be destined for a header, and
+        // should not contain invalid characters {NUL, LR, CF}.
+        if (std::regex_search(args, getStartTimeNewlinePattern())) {
+          throw EnvoyException("Invalid header configuration. Format string contains newline.");
+        }
         formatters.emplace_back(FormatterProviderPtr{new StartTimeFormatter(args)});
       } else {
         formatters.emplace_back(FormatterProviderPtr{new StreamInfoFormatter(token)});
@@ -369,6 +402,15 @@ StreamInfoFormatter::StreamInfoFormatter(const std::string& field_name) {
       return StreamInfo::Utility::formatDownstreamAddressNoPort(
           *stream_info.downstreamRemoteAddress());
     };
+  } else if (field_name == "DOWNSTREAM_DIRECT_REMOTE_ADDRESS") {
+    field_extractor_ = [](const StreamInfo::StreamInfo& stream_info) {
+      return stream_info.downstreamDirectRemoteAddress()->asString();
+    };
+  } else if (field_name == "DOWNSTREAM_DIRECT_REMOTE_ADDRESS_WITHOUT_PORT") {
+    field_extractor_ = [](const StreamInfo::StreamInfo& stream_info) {
+      return StreamInfo::Utility::formatDownstreamAddressNoPort(
+          *stream_info.downstreamDirectRemoteAddress());
+    };
   } else if (field_name == "REQUESTED_SERVER_NAME") {
     field_extractor_ = [](const StreamInfo::StreamInfo& stream_info) {
       if (!stream_info.requestedServerName().empty()) {
@@ -376,6 +418,11 @@ StreamInfoFormatter::StreamInfoFormatter(const std::string& field_name) {
       } else {
         return UnspecifiedValueString;
       }
+    };
+  } else if (field_name == "ROUTE_NAME") {
+    field_extractor_ = [](const StreamInfo::StreamInfo& stream_info) {
+      std::string route_name = stream_info.getRouteName();
+      return route_name.empty() ? UnspecifiedValueString : route_name;
     };
   } else if (field_name == "DOWNSTREAM_PEER_URI_SAN") {
     field_extractor_ =
@@ -396,6 +443,52 @@ StreamInfoFormatter::StreamInfoFormatter(const std::string& field_name) {
     field_extractor_ =
         sslConnectionInfoStringExtractor([](const Ssl::ConnectionInfo& connection_info) {
           return connection_info.subjectLocalCertificate();
+        });
+  } else if (field_name == "DOWNSTREAM_TLS_SESSION_ID") {
+    field_extractor_ = sslConnectionInfoStringExtractor(
+        [](const Ssl::ConnectionInfo& connection_info) { return connection_info.sessionId(); });
+  } else if (field_name == "DOWNSTREAM_TLS_CIPHER") {
+    field_extractor_ =
+        sslConnectionInfoStringExtractor([](const Ssl::ConnectionInfo& connection_info) {
+          return connection_info.ciphersuiteString();
+        });
+  } else if (field_name == "DOWNSTREAM_TLS_VERSION") {
+    field_extractor_ = sslConnectionInfoStringExtractor(
+        [](const Ssl::ConnectionInfo& connection_info) { return connection_info.tlsVersion(); });
+  } else if (field_name == "DOWNSTREAM_PEER_FINGERPRINT_256") {
+    field_extractor_ =
+        sslConnectionInfoStringExtractor([](const Ssl::ConnectionInfo& connection_info) {
+          return connection_info.sha256PeerCertificateDigest();
+        });
+  } else if (field_name == "DOWNSTREAM_PEER_SERIAL") {
+    field_extractor_ =
+        sslConnectionInfoStringExtractor([](const Ssl::ConnectionInfo& connection_info) {
+          return connection_info.serialNumberPeerCertificate();
+        });
+  } else if (field_name == "DOWNSTREAM_PEER_ISSUER") {
+    field_extractor_ =
+        sslConnectionInfoStringExtractor([](const Ssl::ConnectionInfo& connection_info) {
+          return connection_info.issuerPeerCertificate();
+        });
+  } else if (field_name == "DOWNSTREAM_PEER_SUBJECT") {
+    field_extractor_ =
+        sslConnectionInfoStringExtractor([](const Ssl::ConnectionInfo& connection_info) {
+          return connection_info.subjectPeerCertificate();
+        });
+  } else if (field_name == "DOWNSTREAM_PEER_CERT") {
+    field_extractor_ =
+        sslConnectionInfoStringExtractor([](const Ssl::ConnectionInfo& connection_info) {
+          return connection_info.urlEncodedPemEncodedPeerCertificate();
+        });
+  } else if (field_name == "DOWNSTREAM_PEER_CERT_V_START") {
+    field_extractor_ =
+        sslConnectionInfoStringTimeExtractor([](const Ssl::ConnectionInfo& connection_info) {
+          return connection_info.validFromPeerCertificate();
+        });
+  } else if (field_name == "DOWNSTREAM_PEER_CERT_V_END") {
+    field_extractor_ =
+        sslConnectionInfoStringTimeExtractor([](const Ssl::ConnectionInfo& connection_info) {
+          return connection_info.expirationPeerCertificate();
         });
   } else if (field_name == "UPSTREAM_TRANSPORT_FAILURE_REASON") {
     field_extractor_ = [](const StreamInfo::StreamInfo& stream_info) {
@@ -504,7 +597,7 @@ std::string MetadataFormatter::format(const envoy::api::v2::core::Metadata& meta
     }
     data = &val;
   }
-  ProtobufTypes::String json;
+  std::string json;
   const auto status = Protobuf::util::MessageToJsonString(*data, &json);
   RELEASE_ASSERT(status.ok(), "");
   if (max_length_ && json.length() > max_length_.value()) {

@@ -6,6 +6,7 @@
 
 #include "envoy/event/deferred_deletable.h"
 #include "envoy/event/timer.h"
+#include "envoy/http/codec.h"
 #include "envoy/http/conn_pool.h"
 #include "envoy/network/connection.h"
 #include "envoy/stats/timespan.h"
@@ -32,9 +33,11 @@ class ConnPoolImpl : public ConnectionPool::Instance, public ConnPoolImplBase {
 public:
   ConnPoolImpl(Event::Dispatcher& dispatcher, Upstream::HostConstSharedPtr host,
                Upstream::ResourcePriority priority,
-               const Network::ConnectionSocket::OptionsSharedPtr& options);
+               const Network::ConnectionSocket::OptionsSharedPtr& options,
+               const Http::Http1Settings& settings,
+               const Network::TransportSocketOptionsSharedPtr& transport_socket_options);
 
-  ~ConnPoolImpl();
+  ~ConnPoolImpl() override;
 
   // ConnectionPool::Instance
   Http::Protocol protocol() const override { return Http::Protocol::Http11; }
@@ -43,6 +46,7 @@ public:
   bool hasActiveConnections() const override;
   ConnectionPool::Cancellable* newStream(StreamDecoder& response_decoder,
                                          ConnectionPool::Callbacks& callbacks) override;
+  Upstream::HostDescriptionConstSharedPtr host() const override { return host_; };
 
   // ConnPoolImplBase
   void checkForDrained() override;
@@ -54,7 +58,7 @@ protected:
                          public StreamDecoderWrapper,
                          public StreamCallbacks {
     StreamWrapper(StreamDecoder& response_decoder, ActiveClient& parent);
-    ~StreamWrapper();
+    ~StreamWrapper() override;
 
     // StreamEncoderWrapper
     void onEncodeComplete() override;
@@ -73,17 +77,17 @@ protected:
 
     ActiveClient& parent_;
     bool encode_complete_{};
-    bool saw_close_header_{};
+    bool close_connection_{};
     bool decode_complete_{};
   };
 
-  typedef std::unique_ptr<StreamWrapper> StreamWrapperPtr;
+  using StreamWrapperPtr = std::unique_ptr<StreamWrapper>;
 
   struct ActiveClient : LinkedObject<ActiveClient>,
                         public Network::ConnectionCallbacks,
                         public Event::DeferredDeletable {
     ActiveClient(ConnPoolImpl& parent);
-    ~ActiveClient();
+    ~ActiveClient() override;
 
     void onConnectTimeout();
 
@@ -99,11 +103,12 @@ protected:
     Upstream::HostDescriptionConstSharedPtr real_host_description_;
     StreamWrapperPtr stream_wrapper_;
     Event::TimerPtr connect_timer_;
+    Stats::TimespanPtr conn_connect_ms_;
     Stats::TimespanPtr conn_length_;
     uint64_t remaining_requests_;
   };
 
-  typedef std::unique_ptr<ActiveClient> ActiveClientPtr;
+  using ActiveClientPtr = std::unique_ptr<ActiveClient>;
 
   void attachRequestToClient(ActiveClient& client, StreamDecoder& response_decoder,
                              ConnectionPool::Callbacks& callbacks);
@@ -115,14 +120,15 @@ protected:
   void onUpstreamReady();
   void processIdleClient(ActiveClient& client, bool delay);
 
-  Stats::TimespanPtr conn_connect_ms_;
   Event::Dispatcher& dispatcher_;
   std::list<ActiveClientPtr> ready_clients_;
   std::list<ActiveClientPtr> busy_clients_;
   std::list<DrainedCb> drained_callbacks_;
   const Network::ConnectionSocket::OptionsSharedPtr socket_options_;
+  const Network::TransportSocketOptionsSharedPtr transport_socket_options_;
   Event::TimerPtr upstream_ready_timer_;
   bool upstream_ready_enabled_{false};
+  const Http1Settings settings_;
 };
 
 /**
@@ -132,8 +138,10 @@ class ProdConnPoolImpl : public ConnPoolImpl {
 public:
   ProdConnPoolImpl(Event::Dispatcher& dispatcher, Upstream::HostConstSharedPtr host,
                    Upstream::ResourcePriority priority,
-                   const Network::ConnectionSocket::OptionsSharedPtr& options)
-      : ConnPoolImpl(dispatcher, host, priority, options) {}
+                   const Network::ConnectionSocket::OptionsSharedPtr& options,
+                   const Http::Http1Settings& settings,
+                   const Network::TransportSocketOptionsSharedPtr& transport_socket_options)
+      : ConnPoolImpl(dispatcher, host, priority, options, settings, transport_socket_options) {}
 
   // ConnPoolImpl
   CodecClientPtr createCodecClient(Upstream::Host::CreateConnectionData& data) override;

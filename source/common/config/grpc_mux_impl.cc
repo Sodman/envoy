@@ -8,22 +8,22 @@
 namespace Envoy {
 namespace Config {
 
-GrpcMuxImpl::GrpcMuxImpl(const LocalInfo::LocalInfo& local_info, Grpc::AsyncClientPtr async_client,
-                         Event::Dispatcher& dispatcher,
+GrpcMuxImpl::GrpcMuxImpl(const LocalInfo::LocalInfo& local_info,
+                         Grpc::RawAsyncClientPtr async_client, Event::Dispatcher& dispatcher,
                          const Protobuf::MethodDescriptor& service_method,
                          Runtime::RandomGenerator& random, Stats::Scope& scope,
-                         const RateLimitSettings& rate_limit_settings)
+                         const RateLimitSettings& rate_limit_settings, bool skip_subsequent_node)
     : grpc_stream_(this, std::move(async_client), service_method, random, dispatcher, scope,
                    rate_limit_settings),
-
-      local_info_(local_info) {
+      local_info_(local_info), skip_subsequent_node_(skip_subsequent_node),
+      first_stream_request_(true) {
   Config::Utility::checkLocalInfo("ads", local_info);
 }
 
 GrpcMuxImpl::~GrpcMuxImpl() {
   for (const auto& api_state : api_state_) {
     for (auto watch : api_state.second.watches_) {
-      watch->inserted_ = false;
+      watch->clear();
     }
   }
 }
@@ -57,8 +57,12 @@ void GrpcMuxImpl::sendDiscoveryRequest(const std::string& type_url) {
     }
   }
 
+  if (skip_subsequent_node_ && !first_stream_request_) {
+    request.clear_node();
+  }
   ENVOY_LOG(trace, "Sending DiscoveryRequest for {}: {}", type_url, request.DebugString());
   grpc_stream_.sendMessage(request);
+  first_stream_request_ = false;
 
   // clear error_detail after the request is sent if it exists.
   if (api_state_[type_url].request_.has_error_detail()) {
@@ -114,6 +118,14 @@ void GrpcMuxImpl::resume(const std::string& type_url) {
   }
 }
 
+bool GrpcMuxImpl::paused(const std::string& type_url) const {
+  auto entry = api_state_.find(type_url);
+  if (entry == api_state_.end()) {
+    return false;
+  }
+  return entry->second.paused_;
+}
+
 void GrpcMuxImpl::onDiscoveryResponse(
     std::unique_ptr<envoy::api::v2::DiscoveryResponse>&& message) {
   const std::string& type_url = message->type_url();
@@ -152,8 +164,9 @@ void GrpcMuxImpl::onDiscoveryResponse(
     GrpcMuxCallbacks& callbacks = api_state_[type_url].watches_.front()->callbacks_;
     for (const auto& resource : message->resources()) {
       if (type_url != resource.type_url()) {
-        throw EnvoyException(fmt::format("{} does not match {} type URL in DiscoveryResponse {}",
-                                         resource.type_url(), type_url, message->DebugString()));
+        throw EnvoyException(
+            fmt::format("{} does not match the message-wide type URL {} in DiscoveryResponse {}",
+                        resource.type_url(), type_url, message->DebugString()));
       }
       const std::string resource_name = callbacks.resourceName(resource);
       resources.emplace(resource_name, resource);
@@ -167,7 +180,7 @@ void GrpcMuxImpl::onDiscoveryResponse(
         continue;
       }
       Protobuf::RepeatedPtrField<ProtobufWkt::Any> found_resources;
-      for (auto watched_resource_name : watch->resources_) {
+      for (const auto& watched_resource_name : watch->resources_) {
         auto it = resources.find(watched_resource_name);
         if (it != resources.end()) {
           found_resources.Add()->MergeFrom(it->second);
@@ -184,7 +197,8 @@ void GrpcMuxImpl::onDiscoveryResponse(
     api_state_[type_url].request_.set_version_info(message->version_info());
   } catch (const EnvoyException& e) {
     for (auto watch : api_state_[type_url].watches_) {
-      watch->callbacks_.onConfigUpdateFailed(&e);
+      watch->callbacks_.onConfigUpdateFailed(
+          Envoy::Config::ConfigUpdateFailureReason::UpdateRejected, &e);
     }
     ::google::rpc::Status* error_detail = api_state_[type_url].request_.mutable_error_detail();
     error_detail->set_code(Grpc::Status::GrpcStatus::Internal);
@@ -197,7 +211,8 @@ void GrpcMuxImpl::onDiscoveryResponse(
 void GrpcMuxImpl::onWriteable() { drainRequests(); }
 
 void GrpcMuxImpl::onStreamEstablished() {
-  for (const auto type_url : subscriptions_) {
+  first_stream_request_ = true;
+  for (const auto& type_url : subscriptions_) {
     queueDiscoveryRequest(type_url);
   }
 }
@@ -205,7 +220,8 @@ void GrpcMuxImpl::onStreamEstablished() {
 void GrpcMuxImpl::onEstablishmentFailure() {
   for (const auto& api_state : api_state_) {
     for (auto watch : api_state.second.watches_) {
-      watch->callbacks_.onConfigUpdateFailed(nullptr);
+      watch->callbacks_.onConfigUpdateFailed(
+          Envoy::Config::ConfigUpdateFailureReason::ConnectionFailure, nullptr);
     }
   }
 }
@@ -217,10 +233,7 @@ void GrpcMuxImpl::queueDiscoveryRequest(const std::string& queue_item) {
 
 void GrpcMuxImpl::clearRequestQueue() {
   grpc_stream_.maybeUpdateQueueSizeStat(0);
-  // TODO(fredlas) when we have C++17: request_queue_ = {};
-  while (!request_queue_.empty()) {
-    request_queue_.pop();
-  }
+  request_queue_ = {};
 }
 
 void GrpcMuxImpl::drainRequests() {

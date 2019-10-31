@@ -16,7 +16,6 @@ using testing::_;
 using testing::AnyNumber;
 using testing::Combine;
 using testing::DoAll;
-using testing::Expectation;
 using testing::ExpectationSet;
 using testing::InSequence;
 using testing::Invoke;
@@ -181,7 +180,7 @@ ExpectationSet expectContainerEnd(MockProtocol& proto, MockDecoderEventHandler& 
 class DecoderStateMachineTestBase {
 public:
   DecoderStateMachineTestBase() : metadata_(std::make_shared<MessageMetadata>()) {}
-  virtual ~DecoderStateMachineTestBase() {}
+  virtual ~DecoderStateMachineTestBase() = default;
 
   NiceMock<MockProtocol> proto_;
   MessageMetadataSharedPtr metadata_;

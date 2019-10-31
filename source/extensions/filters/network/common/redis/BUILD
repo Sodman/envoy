@@ -11,7 +11,16 @@ envoy_package()
 envoy_cc_library(
     name = "codec_interface",
     hdrs = ["codec.h"],
-    deps = ["//include/envoy/buffer:buffer_interface"],
+    deps = [
+        "//include/envoy/buffer:buffer_interface",
+        "//source/common/common:assert_lib",
+    ],
+)
+
+envoy_cc_library(
+    name = "utility_interface",
+    hdrs = ["utility.h"],
+    deps = [":codec_interface"],
 )
 
 envoy_cc_library(
@@ -40,6 +49,7 @@ envoy_cc_library(
     hdrs = ["client.h"],
     deps = [
         ":codec_lib",
+        ":redis_command_stats_lib",
         "//include/envoy/upstream:cluster_manager_interface",
     ],
 )
@@ -51,7 +61,9 @@ envoy_cc_library(
     deps = [
         ":client_interface",
         ":codec_lib",
+        ":utility_lib",
         "//include/envoy/router:router_interface",
+        "//include/envoy/stats:timespan_interface",
         "//include/envoy/thread_local:thread_local_interface",
         "//include/envoy/upstream:cluster_manager_interface",
         "//source/common/buffer:buffer_lib",
@@ -59,6 +71,32 @@ envoy_cc_library(
         "//source/common/network:filter_lib",
         "//source/common/protobuf:utility_lib",
         "//source/common/upstream:load_balancer_lib",
-        "@envoy_api//envoy/config/filter/network/redis_proxy/v2:redis_proxy_cc",
+        "//source/common/upstream:upstream_lib",
+        "@envoy_api//envoy/config/filter/network/redis_proxy/v2:pkg_cc_proto",
+    ],
+)
+
+envoy_cc_library(
+    name = "utility_lib",
+    srcs = ["utility.cc"],
+    hdrs = ["utility.h"],
+    deps = [
+        ":codec_lib",
+    ],
+)
+
+envoy_cc_library(
+    name = "redis_command_stats_lib",
+    srcs = ["redis_command_stats.cc"],
+    hdrs = ["redis_command_stats.h"],
+    deps = [
+        ":codec_interface",
+        ":supported_commands_lib",
+        "//include/envoy/stats:stats_interface",
+        "//include/envoy/stats:timespan_interface",
+        "//source/common/common:to_lower_table_lib",
+        "//source/common/common:utility_lib",
+        "//source/common/stats:symbol_table_lib",
+        "//source/common/stats:timespan_lib",
     ],
 )

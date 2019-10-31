@@ -10,11 +10,25 @@
 #include "envoy/service/auth/v2/external_auth.pb.h"
 #include "envoy/tracing/http_tracer.h"
 
+#include "common/singleton/const_singleton.h"
+
 namespace Envoy {
 namespace Extensions {
 namespace Filters {
 namespace Common {
 namespace ExtAuthz {
+
+/**
+ * Constant values used for tracing metadata.
+ */
+struct TracingContantValues {
+  const std::string TraceStatus = "ext_authz_status";
+  const std::string TraceUnauthz = "ext_authz_unauthorized";
+  const std::string TraceOk = "ext_authz_ok";
+  const std::string HttpStatus = "ext_authz_http_status";
+};
+
+using TracingConstants = ConstSingleton<TracingContantValues>;
 
 /**
  * Possible async results for a check call.
@@ -44,14 +58,14 @@ struct Response {
   Http::Code status_code{};
 };
 
-typedef std::unique_ptr<Response> ResponsePtr;
+using ResponsePtr = std::unique_ptr<Response>;
 
 /**
  * Async callbacks used during check() calls.
  */
 class RequestCallbacks {
 public:
-  virtual ~RequestCallbacks() {}
+  virtual ~RequestCallbacks() = default;
 
   /**
    * Called when a check request is complete. The resulting ResponsePtr is supplied.
@@ -62,7 +76,7 @@ public:
 class Client {
 public:
   // Destructor
-  virtual ~Client() {}
+  virtual ~Client() = default;
 
   /**
    * Cancel an inflight Check request.
@@ -83,7 +97,7 @@ public:
                      Tracing::Span& parent_span) PURE;
 };
 
-typedef std::unique_ptr<Client> ClientPtr;
+using ClientPtr = std::unique_ptr<Client>;
 
 } // namespace ExtAuthz
 } // namespace Common

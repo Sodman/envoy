@@ -1,20 +1,24 @@
 #!/bin/bash
 
-source "$TEST_RUNDIR/test/integration/test_utility.sh"
+source "$TEST_SRCDIR/envoy/test/integration/test_utility.sh"
 
 # TODO(htuch): In this test script, we are duplicating work done in test_environment.cc via sed.
 # Instead, we can add a simple C++ binary that links against test_environment.cc and uses the
 # substitution methods provided there.
 JSON_TEST_ARRAY=()
 
+# Ensure that the runtime watch root exist.
+mkdir -p "${TEST_TMPDIR}"/test/common/runtime/test_data/current/envoy
+mkdir -p "${TEST_TMPDIR}"/test/common/runtime/test_data/current/envoy_override
+
 # Parameterize IPv4 and IPv6 testing.
 if [[ -z "${ENVOY_IP_TEST_VERSIONS}" ]] || [[ "${ENVOY_IP_TEST_VERSIONS}" == "all" ]] \
   || [[ "${ENVOY_IP_TEST_VERSIONS}" == "v4only" ]]; then
   HOT_RESTART_JSON_V4="${TEST_TMPDIR}"/hot_restart_v4.yaml
   echo building ${HOT_RESTART_JSON_V4} ...
-  cat "${TEST_RUNDIR}"/test/config/integration/server.yaml |
+  cat "${TEST_SRCDIR}/envoy"/test/config/integration/server.yaml |
     sed -e "s#{{ upstream_. }}#0#g" | \
-    sed -e "s#{{ test_rundir }}#$TEST_RUNDIR#" | \
+    sed -e "s#{{ test_rundir }}#$TEST_SRCDIR/envoy#" | \
     sed -e "s#{{ test_tmpdir }}#$TEST_TMPDIR#" | \
     sed -e "s#{{ ip_loopback_address }}#127.0.0.1#" | \
     sed -e "s#{{ dns_lookup_family }}#V4_ONLY#" | \
@@ -25,9 +29,9 @@ fi
 if [[ -z "${ENVOY_IP_TEST_VERSIONS}" ]] || [[ "${ENVOY_IP_TEST_VERSIONS}" == "all" ]] \
   || [[ "${ENVOY_IP_TEST_VERSIONS}" == "v6only" ]]; then
   HOT_RESTART_JSON_V6="${TEST_TMPDIR}"/hot_restart_v6.yaml
-  cat "${TEST_RUNDIR}"/test/config/integration/server.yaml |
+  cat "${TEST_SRCDIR}/envoy"/test/config/integration/server.yaml |
     sed -e "s#{{ upstream_. }}#0#g" | \
-    sed -e "s#{{ test_rundir }}#$TEST_RUNDIR#" | \
+    sed -e "s#{{ test_rundir }}#$TEST_SRCDIR/envoy#" | \
     sed -e "s#{{ test_tmpdir }}#$TEST_TMPDIR#" | \
     sed -e "s#{{ ip_loopback_address }}#::1#" | \
     sed -e "s#{{ dns_lookup_family }}#v6_only#" | \
@@ -39,7 +43,7 @@ fi
 # upstreams to avoid too much wild sedding.
 HOT_RESTART_JSON_UDS="${TEST_TMPDIR}"/hot_restart_uds.yaml
 SOCKET_DIR="$(mktemp -d /tmp/envoy_test_hotrestart.XXXXXX)"
-cat "${TEST_RUNDIR}"/test/config/integration/server_unix_listener.yaml |
+cat "${TEST_SRCDIR}/envoy"/test/config/integration/server_unix_listener.yaml |
   sed -e "s#{{ socket_dir }}#${SOCKET_DIR}#" | \
   sed -e "s#{{ ip_loopback_address }}#127.0.0.1#" | \
   cat > "${HOT_RESTART_JSON_UDS}"
@@ -75,7 +79,7 @@ do
   start_test Updating original config listener addresses
   sleep 3
   UPDATED_HOT_RESTART_JSON="${TEST_TMPDIR}"/hot_restart_updated."${TEST_INDEX}".yaml
-  "${TEST_RUNDIR}"/tools/socket_passing "-o" "${HOT_RESTART_JSON}" "-a" "${ADMIN_ADDRESS_PATH_0}" \
+  "${TEST_SRCDIR}/envoy"/tools/socket_passing "-o" "${HOT_RESTART_JSON}" "-a" "${ADMIN_ADDRESS_PATH_0}" \
     "-u" "${UPDATED_HOT_RESTART_JSON}"
 
   # Send SIGUSR1 signal to the first server, this should not kill it. Also send SIGHUP which should
@@ -112,6 +116,10 @@ do
     --max-obj-name-len 500 2>&1)
   check [ "${ADMIN_HOT_RESTART_VERSION}" = "${CLI_HOT_RESTART_VERSION}" ]
 
+  # Verify we can see server.live in the admin port.
+  SERVER_LIVE_0=$(curl -sg http://${ADMIN_ADDRESS_0}/stats | grep server.live)
+  check [ "$SERVER_LIVE_0" = "server.live: 1" ];
+
   enableHeapCheck
 
   start_test Starting epoch 1
@@ -125,9 +133,13 @@ do
   # Wait for stat flushing
   sleep 7
 
+  ADMIN_ADDRESS_1=$(cat "${ADMIN_ADDRESS_PATH_1}")
+  SERVER_LIVE_1=$(curl -sg http://${ADMIN_ADDRESS_1}/stats | grep server.live)
+  check [ "$SERVER_LIVE_1" = "server.live: 1" ];
+
   start_test Checking that listener addresses have not changed
   HOT_RESTART_JSON_1="${TEST_TMPDIR}"/hot_restart.1."${TEST_INDEX}".yaml
-  "${TEST_RUNDIR}"/tools/socket_passing "-o" "${UPDATED_HOT_RESTART_JSON}" "-a" "${ADMIN_ADDRESS_PATH_1}" \
+  "${TEST_SRCDIR}/envoy"/tools/socket_passing "-o" "${UPDATED_HOT_RESTART_JSON}" "-a" "${ADMIN_ADDRESS_PATH_1}" \
     "-u" "${HOT_RESTART_JSON_1}"
   CONFIG_DIFF=$(diff "${UPDATED_HOT_RESTART_JSON}" "${HOT_RESTART_JSON_1}")
   [[ -z "${CONFIG_DIFF}" ]]
@@ -143,7 +155,7 @@ do
 
   start_test Checking that listener addresses have not changed
   HOT_RESTART_JSON_2="${TEST_TMPDIR}"/hot_restart.2."${TEST_INDEX}".yaml
-  "${TEST_RUNDIR}"/tools/socket_passing "-o" "${UPDATED_HOT_RESTART_JSON}" "-a" "${ADMIN_ADDRESS_PATH_2}" \
+  "${TEST_SRCDIR}/envoy"/tools/socket_passing "-o" "${UPDATED_HOT_RESTART_JSON}" "-a" "${ADMIN_ADDRESS_PATH_2}" \
     "-u" "${HOT_RESTART_JSON_2}"
   CONFIG_DIFF=$(diff "${UPDATED_HOT_RESTART_JSON}" "${HOT_RESTART_JSON_2}")
   [[ -z "${CONFIG_DIFF}" ]]

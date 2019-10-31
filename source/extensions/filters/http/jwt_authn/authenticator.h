@@ -15,28 +15,29 @@ namespace HttpFilters {
 namespace JwtAuthn {
 
 class Authenticator;
-typedef std::unique_ptr<Authenticator> AuthenticatorPtr;
+using AuthenticatorPtr = std::unique_ptr<Authenticator>;
 
-typedef std::function<void(const ::google::jwt_verify::Status& status)> AuthenticatorCallback;
+using AuthenticatorCallback = std::function<void(const ::google::jwt_verify::Status& status)>;
 
-typedef std::function<void(const std::string&, const ProtobufWkt::Struct&)> SetPayloadCallback;
+using SetPayloadCallback = std::function<void(const std::string&, const ProtobufWkt::Struct&)>;
 
 /**
  *  CreateJwksFetcherCb is a callback interface for creating a JwksFetcher instance.
  */
-typedef std::function<Common::JwksFetcherPtr(Upstream::ClusterManager&)> CreateJwksFetcherCb;
+using CreateJwksFetcherCb = std::function<Common::JwksFetcherPtr(Upstream::ClusterManager&)>;
 
 /**
  *  Authenticator object to handle all JWT authentication flow.
  */
 class Authenticator {
 public:
-  virtual ~Authenticator() {}
+  virtual ~Authenticator() = default;
 
   // Verify if headers satisfies the JWT requirements. Can be limited to single provider with
   // extract_param.
-  virtual void verify(Http::HeaderMap& headers, std::vector<JwtLocationConstPtr>&& tokens,
-                      SetPayloadCallback set_payload_cb, AuthenticatorCallback callback) PURE;
+  virtual void verify(Http::HeaderMap& headers, Tracing::Span& parent_span,
+                      std::vector<JwtLocationConstPtr>&& tokens, SetPayloadCallback set_payload_cb,
+                      AuthenticatorCallback callback) PURE;
 
   // Called when the object is about to be destroyed.
   virtual void onDestroy() PURE;
@@ -54,7 +55,7 @@ public:
  */
 class AuthFactory {
 public:
-  virtual ~AuthFactory() {}
+  virtual ~AuthFactory() = default;
 
   // Factory method for creating authenticator, and populate it with provider config.
   virtual AuthenticatorPtr create(const ::google::jwt_verify::CheckAudience* check_audience,

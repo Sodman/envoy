@@ -1,7 +1,6 @@
 #pragma once
 
-#include <stdlib.h>
-
+#include <cstdlib>
 #include <list>
 #include <random>
 #include <string>
@@ -19,22 +18,25 @@
 #include "common/common/c_smart_ptr.h"
 #include "common/common/thread.h"
 #include "common/http/header_map_impl.h"
+#include "common/protobuf/message_validator_impl.h"
 #include "common/protobuf/utility.h"
 #include "common/stats/fake_symbol_table_impl.h"
 
 #include "test/test_common/file_system_for_test.h"
 #include "test/test_common/printers.h"
+#include "test/test_common/test_time_system.h"
 #include "test/test_common/thread_factory_for_test.h"
 
+#include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
-using testing::_;
+using testing::_; // NOLINT(misc-unused-using-decls)
 using testing::AssertionFailure;
 using testing::AssertionResult;
 using testing::AssertionSuccess;
-using testing::Invoke;
+using testing::Invoke; //  NOLINT(misc-unused-using-decls)
 
 namespace Envoy {
 
@@ -103,6 +105,19 @@ namespace Envoy {
       return status;                                                                               \
     }                                                                                              \
   } while (false)
+
+// A convenience macro for testing Envoy deprecated features. This will disable the test when
+// tests are built with --define deprecated_features=disabled to avoid the hard-failure mode for
+// deprecated features. Sample usage is:
+//
+// TEST_F(FixtureName, DEPRECATED_FEATURE_TEST(TestName)) {
+// ...
+// }
+#ifndef ENVOY_DISABLE_DEPRECATED_FEATURES
+#define DEPRECATED_FEATURE_TEST(X) X
+#else
+#define DEPRECATED_FEATURE_TEST(X) DISABLED_##X
+#endif
 
 // Random number generator which logs its seed to stderr. To repeat a test run with a non-zero seed
 // one can run the test with --test_arg=--gtest_random_seed=[seed]
@@ -179,11 +194,52 @@ public:
   static Stats::GaugeSharedPtr findGauge(Stats::Store& store, const std::string& name);
 
   /**
+   * Wait till Counter value is equal to the passed ion value.
+   * @param store supplies the stats store.
+   * @param name supplies the name of the counter to wait for.
+   * @param value supplies the value of the counter.
+   * @param time_system the time system to use for waiting.
+   */
+  static void waitForCounterEq(Stats::Store& store, const std::string& name, uint64_t value,
+                               Event::TestTimeSystem& time_system);
+
+  /**
+   * Wait for a counter to >= a given value.
+   * @param store supplies the stats store.
+   * @param name counter name.
+   * @param value target value.
+   * @param time_system the time system to use for waiting.
+   */
+  static void waitForCounterGe(Stats::Store& store, const std::string& name, uint64_t value,
+                               Event::TestTimeSystem& time_system);
+
+  /**
+   * Wait for a gauge to >= a given value.
+   * @param store supplies the stats store.
+   * @param name gauge name.
+   * @param value target value.
+   * @param time_system the time system to use for waiting.
+   */
+  static void waitForGaugeGe(Stats::Store& store, const std::string& name, uint64_t value,
+                             Event::TestTimeSystem& time_system);
+
+  /**
+   * Wait for a gauge to == a given value.
+   * @param store supplies the stats store.
+   * @param name gauge name.
+   * @param value target value.
+   * @param time_system the time system to use for waiting.
+   */
+  static void waitForGaugeEq(Stats::Store& store, const std::string& name, uint64_t value,
+                             Event::TestTimeSystem& time_system);
+
+  /**
    * Convert a string list of IP addresses into a list of network addresses usable for DNS
    * response testing.
    */
-  static std::list<Network::Address::InstanceConstSharedPtr>
-  makeDnsResponse(const std::list<std::string>& addresses);
+  static std::list<Network::DnsResponse>
+  makeDnsResponse(const std::list<std::string>& addresses,
+                  std::chrono::seconds = std::chrono::seconds(0));
 
   /**
    * List files in a given directory path
@@ -209,10 +265,17 @@ public:
    *
    * @param lhs proto on LHS.
    * @param rhs proto on RHS.
+   * @param ignore_repeated_field_ordering if true, repeated field ordering will be ignored.
    * @return bool indicating whether the protos are equal.
    */
-  static bool protoEqual(const Protobuf::Message& lhs, const Protobuf::Message& rhs) {
-    return Protobuf::util::MessageDifferencer::Equivalent(lhs, rhs);
+  static bool protoEqual(const Protobuf::Message& lhs, const Protobuf::Message& rhs,
+                         bool ignore_repeated_field_ordering = false) {
+    Protobuf::util::MessageDifferencer differencer;
+    differencer.set_message_field_comparison(Protobuf::util::MessageDifferencer::EQUIVALENT);
+    if (ignore_repeated_field_ordering) {
+      differencer.set_repeated_field_comparison(Protobuf::util::MessageDifferencer::AS_SET);
+    }
+    return differencer.Compare(lhs, rhs);
   }
 
   static bool protoEqualIgnoringField(const Protobuf::Message& lhs, const Protobuf::Message& rhs,
@@ -257,30 +320,59 @@ public:
    *
    * @param lhs RepeatedPtrField on LHS.
    * @param rhs RepeatedPtrField on RHS.
+   * @param ignore_ordering if ordering should be ignored. Note if true this turns
+   *   comparison into an N^2 operation.
    * @return bool indicating whether the RepeatedPtrField are equal. TestUtility::protoEqual() is
    *              used for individual element testing.
    */
-  template <class ProtoType>
+  template <typename ProtoType>
   static bool repeatedPtrFieldEqual(const Protobuf::RepeatedPtrField<ProtoType>& lhs,
-                                    const Protobuf::RepeatedPtrField<ProtoType>& rhs) {
+                                    const Protobuf::RepeatedPtrField<ProtoType>& rhs,
+                                    bool ignore_ordering = false) {
     if (lhs.size() != rhs.size()) {
       return false;
     }
 
-    for (int i = 0; i < lhs.size(); ++i) {
-      if (!TestUtility::protoEqual(lhs[i], rhs[i])) {
+    if (!ignore_ordering) {
+      for (int i = 0; i < lhs.size(); ++i) {
+        if (!TestUtility::protoEqual(lhs[i], rhs[i], /*ignore_ordering=*/false)) {
+          return false;
+        }
+      }
+
+      return true;
+    }
+    using ProtoList = std::list<std::unique_ptr<const Protobuf::Message>>;
+    // Iterate through using protoEqual as ignore_ordering is true, and fields
+    // in the sub-protos may also be out of order.
+    ProtoList lhs_list =
+        RepeatedPtrUtil::convertToConstMessagePtrContainer<ProtoType, ProtoList>(lhs);
+    ProtoList rhs_list =
+        RepeatedPtrUtil::convertToConstMessagePtrContainer<ProtoType, ProtoList>(rhs);
+    while (!lhs_list.empty()) {
+      bool found = false;
+      for (auto it = rhs_list.begin(); it != rhs_list.end(); ++it) {
+        if (TestUtility::protoEqual(*lhs_list.front(), **it,
+                                    /*ignore_ordering=*/true)) {
+          lhs_list.pop_front();
+          rhs_list.erase(it);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
         return false;
       }
     }
-
     return true;
   }
 
   template <class ProtoType>
   static AssertionResult
   assertRepeatedPtrFieldEqual(const Protobuf::RepeatedPtrField<ProtoType>& lhs,
-                              const Protobuf::RepeatedPtrField<ProtoType>& rhs) {
-    if (!repeatedPtrFieldEqual(lhs, rhs)) {
+                              const Protobuf::RepeatedPtrField<ProtoType>& rhs,
+                              bool ignore_ordering = false) {
+    if (!repeatedPtrFieldEqual(lhs, rhs, ignore_ordering)) {
       return AssertionFailure() << RepeatedPtrUtil::debugString(lhs) << " does not match "
                                 << RepeatedPtrUtil::debugString(rhs);
     }
@@ -289,12 +381,11 @@ public:
   }
 
   /**
-   * Parse bootstrap config from v1 JSON static config string.
-   * @param json_string source v1 JSON static config string.
-   * @return envoy::config::bootstrap::v2::Bootstrap.
+   * Returns the closest thing to a sensible "name" field for the given xDS resource.
+   * @param resource the resource to extract the name of.
+   * @return the resource's name.
    */
-  static envoy::config::bootstrap::v2::Bootstrap
-  parseBootstrapFromJson(const std::string& json_string);
+  static std::string xdsResourceName(const ProtobufWkt::Any& resource);
 
   /**
    * Returns a "novel" IPv4 loopback address, if available.
@@ -318,7 +409,7 @@ public:
    */
   template <class MessageType> static MessageType parseYaml(const std::string& yaml) {
     MessageType message;
-    MessageUtil::loadFromYaml(yaml, message);
+    TestUtility::loadFromYaml(yaml, message);
     return message;
   }
 
@@ -400,7 +491,62 @@ public:
    * @param vector of gauges to check.
    * @return bool indicating that passed gauges not matching the omitted regex have a value of 0.
    */
-  static bool gaugesZeroed(const std::vector<Stats::GaugeSharedPtr> gauges);
+  static bool gaugesZeroed(const std::vector<Stats::GaugeSharedPtr>& gauges);
+  static bool gaugesZeroed(
+      const std::vector<std::pair<absl::string_view, Stats::PrimitiveGaugeReference>>& gauges);
+
+  // Strict variants of Protobuf::MessageUtil
+  static void loadFromJson(const std::string& json, Protobuf::Message& message) {
+    return MessageUtil::loadFromJson(json, message, ProtobufMessage::getStrictValidationVisitor());
+  }
+
+  static void loadFromJson(const std::string& json, ProtobufWkt::Struct& message) {
+    return MessageUtil::loadFromJson(json, message);
+  }
+
+  static void loadFromYaml(const std::string& yaml, Protobuf::Message& message) {
+    return MessageUtil::loadFromYaml(yaml, message, ProtobufMessage::getStrictValidationVisitor());
+  }
+
+  static void loadFromFile(const std::string& path, Protobuf::Message& message, Api::Api& api) {
+    return MessageUtil::loadFromFile(path, message, ProtobufMessage::getStrictValidationVisitor(),
+                                     api);
+  }
+
+  template <class MessageType>
+  static inline MessageType anyConvert(const ProtobufWkt::Any& message) {
+    return MessageUtil::anyConvert<MessageType>(message);
+  }
+
+  template <class MessageType>
+  static void loadFromFileAndValidate(const std::string& path, MessageType& message) {
+    return MessageUtil::loadFromFileAndValidate(path, message,
+                                                ProtobufMessage::getStrictValidationVisitor());
+  }
+
+  template <class MessageType>
+  static void loadFromYamlAndValidate(const std::string& yaml, MessageType& message) {
+    return MessageUtil::loadFromYamlAndValidate(yaml, message,
+                                                ProtobufMessage::getStrictValidationVisitor());
+  }
+
+  template <class MessageType> static void validate(const MessageType& message) {
+    return MessageUtil::validate(message, ProtobufMessage::getStrictValidationVisitor());
+  }
+
+  template <class MessageType>
+  static const MessageType& downcastAndValidate(const Protobuf::Message& config) {
+    return MessageUtil::downcastAndValidate<MessageType>(
+        config, ProtobufMessage::getStrictValidationVisitor());
+  }
+
+  static void jsonConvert(const Protobuf::Message& source, Protobuf::Message& dest) {
+    // Explicit round-tripping to support conversions inside tests between arbitrary messages as a
+    // convenience.
+    ProtobufWkt::Struct tmp;
+    MessageUtil::jsonConvert(source, tmp);
+    MessageUtil::jsonConvert(tmp, ProtobufMessage::getStrictValidationVisitor(), dest);
+  }
 };
 
 /**
@@ -494,8 +640,8 @@ public:
   using HeaderMapImpl::remove;
   void addCopy(const std::string& key, const std::string& value);
   void remove(const std::string& key);
-  std::string get_(const std::string& key);
-  std::string get_(const LowerCaseString& key);
+  std::string get_(const std::string& key) const;
+  std::string get_(const LowerCaseString& key) const;
   bool has(const std::string& key);
   bool has(const LowerCaseString& key);
 };
@@ -533,7 +679,22 @@ MATCHER_P(HeaderMapEqualIgnoreOrder, expected, "") {
 }
 
 MATCHER_P(ProtoEq, expected, "") {
-  const bool equal = TestUtility::protoEqual(arg, expected);
+  const bool equal =
+      TestUtility::protoEqual(arg, expected, /*ignore_repeated_field_ordering=*/false);
+  if (!equal) {
+    *result_listener << "\n"
+                     << "==========================Expected proto:===========================\n"
+                     << expected.DebugString()
+                     << "------------------is not equal to actual proto:---------------------\n"
+                     << arg.DebugString()
+                     << "====================================================================\n";
+  }
+  return equal;
+}
+
+MATCHER_P(ProtoEqIgnoreRepeatedFieldOrdering, expected, "") {
+  const bool equal =
+      TestUtility::protoEqual(arg, expected, /*ignore_repeated_field_ordering=*/true);
   if (!equal) {
     *result_listener << "\n"
                      << TestUtility::addLeftAndRightPadding("Expected proto:") << "\n"
@@ -581,7 +742,7 @@ MATCHER_P(Percent, rhs, "") {
   envoy::type::FractionalPercent expected;
   expected.set_numerator(rhs);
   expected.set_denominator(envoy::type::FractionalPercent::HUNDRED);
-  return TestUtility::protoEqual(expected, arg);
+  return TestUtility::protoEqual(expected, arg, /*ignore_repeated_field_ordering=*/false);
 }
 
 } // namespace Envoy

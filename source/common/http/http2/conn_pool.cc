@@ -9,6 +9,7 @@
 
 #include "common/http/http2/codec_impl.h"
 #include "common/network/utility.h"
+#include "common/stats/timespan_impl.h"
 #include "common/upstream/upstream_impl.h"
 
 namespace Envoy {
@@ -17,9 +18,10 @@ namespace Http2 {
 
 ConnPoolImpl::ConnPoolImpl(Event::Dispatcher& dispatcher, Upstream::HostConstSharedPtr host,
                            Upstream::ResourcePriority priority,
-                           const Network::ConnectionSocket::OptionsSharedPtr& options)
+                           const Network::ConnectionSocket::OptionsSharedPtr& options,
+                           const Network::TransportSocketOptionsSharedPtr& transport_socket_options)
     : ConnPoolImplBase(std::move(host), std::move(priority)), dispatcher_(dispatcher),
-      socket_options_(options) {}
+      socket_options_(options), transport_socket_options_(transport_socket_options) {}
 
 ConnPoolImpl::~ConnPoolImpl() {
   if (primary_client_) {
@@ -101,7 +103,8 @@ void ConnPoolImpl::newClientStream(Http::StreamDecoder& response_decoder,
     host_->cluster().stats().upstream_rq_active_.inc();
     host_->cluster().resourceManager(priority_).requests().inc();
     callbacks.onPoolReady(primary_client_->client_->newStream(response_decoder),
-                          primary_client_->real_host_description_);
+                          primary_client_->real_host_description_,
+                          primary_client_->client_->streamInfo());
   }
 }
 
@@ -146,15 +149,11 @@ ConnectionPool::Cancellable* ConnPoolImpl::newStream(Http::StreamDecoder& respon
 void ConnPoolImpl::onConnectionEvent(ActiveClient& client, Network::ConnectionEvent event) {
   if (event == Network::ConnectionEvent::RemoteClose ||
       event == Network::ConnectionEvent::LocalClose) {
-
     ENVOY_CONN_LOG(debug, "client disconnected", *client.client_);
+
+    Envoy::Upstream::reportUpstreamCxDestroy(host_, event);
     if (client.closed_with_active_rq_) {
-      host_->cluster().stats().upstream_cx_destroy_with_active_rq_.inc();
-      if (event == Network::ConnectionEvent::RemoteClose) {
-        host_->cluster().stats().upstream_cx_destroy_remote_with_active_rq_.inc();
-      } else {
-        host_->cluster().stats().upstream_cx_destroy_local_with_active_rq_.inc();
-      }
+      Envoy::Upstream::reportUpstreamCxDestroyActiveRequest(host_, event);
     }
 
     if (client.connect_timer_) {
@@ -274,10 +273,10 @@ void ConnPoolImpl::onUpstreamReady() {
 ConnPoolImpl::ActiveClient::ActiveClient(ConnPoolImpl& parent)
     : parent_(parent),
       connect_timer_(parent_.dispatcher_.createTimer([this]() -> void { onConnectTimeout(); })) {
-  parent_.conn_connect_ms_ = std::make_unique<Stats::Timespan>(
+  parent_.conn_connect_ms_ = std::make_unique<Stats::HistogramCompletableTimespanImpl>(
       parent_.host_->cluster().stats().upstream_cx_connect_ms_, parent_.dispatcher_.timeSource());
-  Upstream::Host::CreateConnectionData data =
-      parent_.host_->createConnection(parent_.dispatcher_, parent_.socket_options_, nullptr);
+  Upstream::Host::CreateConnectionData data = parent_.host_->createConnection(
+      parent_.dispatcher_, parent_.socket_options_, parent_.transport_socket_options_);
   real_host_description_ = data.host_description_;
   client_ = parent_.createCodecClient(data);
   client_->addConnectionCallbacks(*this);
@@ -290,7 +289,7 @@ ConnPoolImpl::ActiveClient::ActiveClient(ConnPoolImpl& parent)
   parent_.host_->cluster().stats().upstream_cx_total_.inc();
   parent_.host_->cluster().stats().upstream_cx_active_.inc();
   parent_.host_->cluster().stats().upstream_cx_http2_total_.inc();
-  conn_length_ = std::make_unique<Stats::Timespan>(
+  conn_length_ = std::make_unique<Stats::HistogramCompletableTimespanImpl>(
       parent_.host_->cluster().stats().upstream_cx_length_ms_, parent_.dispatcher_.timeSource());
 
   client_->setConnectionStats({parent_.host_->cluster().stats().upstream_cx_rx_bytes_total_,

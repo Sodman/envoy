@@ -9,7 +9,7 @@ namespace Configuration {
 
 class HealthCheckerFactoryContext {
 public:
-  virtual ~HealthCheckerFactoryContext() {}
+  virtual ~HealthCheckerFactoryContext() = default;
 
   /**
    * @return Upstream::Cluster& the owning cluster.
@@ -37,6 +37,17 @@ public:
    * created health checkers. This function may not be idempotent.
    */
   virtual Upstream::HealthCheckEventLoggerPtr eventLogger() PURE;
+
+  /**
+   * @return ProtobufMessage::ValidationVisitor& validation visitor for health checker configuration
+   *         messages.
+   */
+  virtual ProtobufMessage::ValidationVisitor& messageValidationVisitor() PURE;
+
+  /**
+   * @return Api::Api& the API used by the server.
+   */
+  virtual Api::Api& api() PURE;
 };
 
 /**
@@ -45,7 +56,7 @@ public:
  */
 class CustomHealthCheckerFactory {
 public:
-  virtual ~CustomHealthCheckerFactory() {}
+  virtual ~CustomHealthCheckerFactory() = default;
 
   /**
    * Creates a particular custom health checker factory implementation.

@@ -8,6 +8,7 @@
 #include "envoy/api/api.h"
 #include "envoy/common/mutex_tracer.h"
 #include "envoy/event/timer.h"
+#include "envoy/grpc/context.h"
 #include "envoy/http/context.h"
 #include "envoy/init/manager.h"
 #include "envoy/local_info/local_info.h"
@@ -34,7 +35,7 @@ namespace Server {
  */
 class Instance {
 public:
-  virtual ~Instance() {}
+  virtual ~Instance() = default;
 
   /**
    * @return Admin& the global HTTP admin endpoint for the server.
@@ -183,9 +184,19 @@ public:
   virtual Stats::Store& stats() PURE;
 
   /**
+   * @return the server-wide grpc context.
+   */
+  virtual Grpc::Context& grpcContext() PURE;
+
+  /**
    * @return the server-wide http context.
    */
   virtual Http::Context& httpContext() PURE;
+
+  /**
+   * @return the server-wide process context.
+   */
+  virtual OptProcessContextRef processContext() PURE;
 
   /**
    * @return ThreadLocal::Instance& the thread local storage engine for the server. This is used to
@@ -196,7 +207,7 @@ public:
   /**
    * @return information about the local environment the server is running in.
    */
-  virtual const LocalInfo::LocalInfo& localInfo() PURE;
+  virtual const LocalInfo::LocalInfo& localInfo() const PURE;
 
   /**
    * @return the time source used for the server.
@@ -207,6 +218,17 @@ public:
    * @return the flush interval of stats sinks.
    */
   virtual std::chrono::milliseconds statsFlushInterval() const PURE;
+
+  /**
+   * @return ProtobufMessage::ValidationContext& validation context for configuration
+   *         messages.
+   */
+  virtual ProtobufMessage::ValidationContext& messageValidationContext() PURE;
+
+  /**
+   * @return Configuration::ServerFactoryContext& factory context for filters.
+   */
+  virtual Configuration::ServerFactoryContext& serverFactoryContext() PURE;
 };
 
 } // namespace Server

@@ -368,6 +368,28 @@ TEST(StringUtil, StringViewSplit) {
   }
 }
 
+TEST(StringUtil, StringViewRemoveTokens) {
+  // Basic cases.
+  EXPECT_EQ(StringUtil::removeTokens("", ",", {"two"}, ","), "");
+  EXPECT_EQ(StringUtil::removeTokens("one", ",", {"two"}, ","), "one");
+  EXPECT_EQ(StringUtil::removeTokens("one,two ", ",", {"two"}, ","), "one");
+  EXPECT_EQ(StringUtil::removeTokens("one,two ", ",", {"two", "one"}, ","), "");
+  EXPECT_EQ(StringUtil::removeTokens("one,two ", ",", {"one"}, ","), "two");
+  EXPECT_EQ(StringUtil::removeTokens("one,two,three ", ",", {"two"}, ","), "one,three");
+  EXPECT_EQ(StringUtil::removeTokens(" one , two , three ", ",", {"two"}, ","), "one,three");
+  EXPECT_EQ(StringUtil::removeTokens(" one , two , three ", ",", {"three"}, ","), "one,two");
+  EXPECT_EQ(StringUtil::removeTokens(" one , two , three ", ",", {"three"}, ", "), "one, two");
+  EXPECT_EQ(StringUtil::removeTokens("one,two,three", ",", {"two", "three"}, ","), "one");
+  EXPECT_EQ(StringUtil::removeTokens("one,two,three,four", ",", {"two", "three"}, ","), "one,four");
+  // Ignore case.
+  EXPECT_EQ(StringUtil::removeTokens("One,Two,Three,Four", ",", {"two", "three"}, ","), "One,Four");
+  // Longer joiner.
+  EXPECT_EQ(StringUtil::removeTokens("one,two,three,four", ",", {"two", "three"}, " , "),
+            "one , four");
+  // Delimiters.
+  EXPECT_EQ(StringUtil::removeTokens("one,two;three ", ",;", {"two"}, ","), "one,three");
+}
+
 TEST(StringUtil, removeCharacters) {
   IntervalSetImpl<size_t> removals;
   removals.insert(3, 5);
@@ -401,22 +423,6 @@ TEST(Primes, findPrimeLargerThan) {
   EXPECT_EQ(10007, Primes::findPrimeLargerThan(9991));
 }
 
-TEST(RegexUtil, parseRegex) {
-  EXPECT_THROW_WITH_REGEX(RegexUtil::parseRegex("(+invalid)"), EnvoyException,
-                          "Invalid regex '\\(\\+invalid\\)': .+");
-
-  {
-    std::regex regex = RegexUtil::parseRegex("x*");
-    EXPECT_NE(0, regex.flags() & std::regex::optimize);
-  }
-
-  {
-    std::regex regex = RegexUtil::parseRegex("x*", std::regex::icase);
-    EXPECT_NE(0, regex.flags() & std::regex::icase);
-    EXPECT_EQ(0, regex.flags() & std::regex::optimize);
-  }
-}
-
 class WeightedClusterEntry {
 public:
   WeightedClusterEntry(const std::string name, const uint64_t weight)
@@ -429,7 +435,7 @@ private:
   const std::string name_;
   const uint64_t weight_;
 };
-typedef std::shared_ptr<WeightedClusterEntry> WeightedClusterEntrySharedPtr;
+using WeightedClusterEntrySharedPtr = std::shared_ptr<WeightedClusterEntry>;
 
 TEST(WeightedClusterUtil, pickCluster) {
   std::vector<WeightedClusterEntrySharedPtr> clusters;
@@ -836,6 +842,12 @@ TEST(TrieLookupTable, LongestPrefix) {
   EXPECT_EQ(nullptr, trie.findLongestPrefix("toto"));
   EXPECT_EQ(nullptr, trie.find(" "));
   EXPECT_EQ(nullptr, trie.findLongestPrefix(" "));
+}
+
+TEST(InlineStorageTest, InlineString) {
+  InlineStringPtr hello = InlineString::create("Hello, world!");
+  EXPECT_EQ("Hello, world!", hello->toStringView());
+  EXPECT_EQ("Hello, world!", hello->toString());
 }
 
 } // namespace Envoy

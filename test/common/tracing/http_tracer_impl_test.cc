@@ -24,11 +24,10 @@
 #include "gtest/gtest.h"
 
 using testing::_;
-using testing::Invoke;
+using testing::Eq;
 using testing::NiceMock;
 using testing::Return;
 using testing::ReturnPointee;
-using testing::ReturnRef;
 
 namespace Envoy {
 namespace Tracing {
@@ -121,22 +120,25 @@ TEST(HttpConnManFinalizerImpl, OriginalAndLongPath) {
                                           {"x-envoy-original-path", path},
                                           {":method", "GET"},
                                           {"x-forwarded-proto", "http"}};
+  Http::TestHeaderMapImpl response_headers;
+  Http::TestHeaderMapImpl response_trailers;
   NiceMock<StreamInfo::MockStreamInfo> stream_info;
 
   absl::optional<Http::Protocol> protocol = Http::Protocol::Http2;
   EXPECT_CALL(stream_info, bytesReceived()).WillOnce(Return(10));
   EXPECT_CALL(stream_info, bytesSent()).WillOnce(Return(11));
-  EXPECT_CALL(stream_info, protocol()).WillOnce(ReturnPointee(&protocol));
+  EXPECT_CALL(stream_info, protocol()).WillRepeatedly(ReturnPointee(&protocol));
   absl::optional<uint32_t> response_code;
   EXPECT_CALL(stream_info, responseCode()).WillRepeatedly(ReturnPointee(&response_code));
 
   EXPECT_CALL(span, setTag(_, _)).Times(testing::AnyNumber());
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpUrl, path_prefix + expected_path));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpMethod, "GET"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpProtocol, "HTTP/2"));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpUrl), Eq(path_prefix + expected_path)));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpMethod), Eq("GET")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpProtocol), Eq("HTTP/2")));
 
   NiceMock<MockConfig> config;
-  HttpTracerUtility::finalizeSpan(span, &request_headers, stream_info, config);
+  HttpTracerUtility::finalizeDownstreamSpan(span, &request_headers, &response_headers,
+                                            &response_trailers, stream_info, config);
 }
 
 TEST(HttpConnManFinalizerImpl, NoGeneratedId) {
@@ -147,22 +149,25 @@ TEST(HttpConnManFinalizerImpl, NoGeneratedId) {
 
   Http::TestHeaderMapImpl request_headers{
       {"x-envoy-original-path", path}, {":method", "GET"}, {"x-forwarded-proto", "http"}};
+  Http::TestHeaderMapImpl response_headers;
+  Http::TestHeaderMapImpl response_trailers;
   NiceMock<StreamInfo::MockStreamInfo> stream_info;
 
   absl::optional<Http::Protocol> protocol = Http::Protocol::Http2;
   EXPECT_CALL(stream_info, bytesReceived()).WillOnce(Return(10));
   EXPECT_CALL(stream_info, bytesSent()).WillOnce(Return(11));
-  EXPECT_CALL(stream_info, protocol()).WillOnce(ReturnPointee(&protocol));
+  EXPECT_CALL(stream_info, protocol()).WillRepeatedly(ReturnPointee(&protocol));
   absl::optional<uint32_t> response_code;
   EXPECT_CALL(stream_info, responseCode()).WillRepeatedly(ReturnPointee(&response_code));
 
   EXPECT_CALL(span, setTag(_, _)).Times(testing::AnyNumber());
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpUrl, path_prefix + expected_path));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpMethod, "GET"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpProtocol, "HTTP/2"));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpUrl), Eq(path_prefix + expected_path)));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpMethod), Eq("GET")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpProtocol), Eq("HTTP/2")));
 
   NiceMock<MockConfig> config;
-  HttpTracerUtility::finalizeSpan(span, &request_headers, stream_info, config);
+  HttpTracerUtility::finalizeDownstreamSpan(span, &request_headers, &response_headers,
+                                            &response_trailers, stream_info, config);
 }
 
 TEST(HttpConnManFinalizerImpl, NullRequestHeaders) {
@@ -175,15 +180,16 @@ TEST(HttpConnManFinalizerImpl, NullRequestHeaders) {
   EXPECT_CALL(stream_info, responseCode()).WillRepeatedly(ReturnPointee(&response_code));
   EXPECT_CALL(stream_info, upstreamHost()).WillOnce(Return(nullptr));
 
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpStatusCode, "0"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().Error, Tracing::Tags::get().True));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().ResponseSize, "11"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().ResponseFlags, "-"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().RequestSize, "10"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().UpstreamCluster, _)).Times(0);
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpStatusCode), Eq("0")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().Error), Eq(Tracing::Tags::get().True)));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().ResponseSize), Eq("11")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().ResponseFlags), Eq("-")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().RequestSize), Eq("10")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().Component), Eq(Tracing::Tags::get().Proxy)));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().UpstreamCluster), _)).Times(0);
 
   NiceMock<MockConfig> config;
-  HttpTracerUtility::finalizeSpan(span, nullptr, stream_info, config);
+  HttpTracerUtility::finalizeDownstreamSpan(span, nullptr, nullptr, nullptr, stream_info, config);
 }
 
 TEST(HttpConnManFinalizerImpl, StreamInfoLogs) {
@@ -221,7 +227,7 @@ TEST(HttpConnManFinalizerImpl, StreamInfoLogs) {
 
   NiceMock<MockConfig> config;
   EXPECT_CALL(config, verbose).WillOnce(Return(true));
-  HttpTracerUtility::finalizeSpan(span, nullptr, stream_info, config);
+  HttpTracerUtility::finalizeDownstreamSpan(span, nullptr, nullptr, nullptr, stream_info, config);
 }
 
 TEST(HttpConnManFinalizerImpl, UpstreamClusterTagSet) {
@@ -235,15 +241,16 @@ TEST(HttpConnManFinalizerImpl, UpstreamClusterTagSet) {
   EXPECT_CALL(stream_info, responseCode()).WillRepeatedly(ReturnPointee(&response_code));
   EXPECT_CALL(stream_info, upstreamHost()).Times(2);
 
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().UpstreamCluster, "my_upstream_cluster"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpStatusCode, "0"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().Error, Tracing::Tags::get().True));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().ResponseSize, "11"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().ResponseFlags, "-"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().RequestSize, "10"));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().Component), Eq(Tracing::Tags::get().Proxy)));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().UpstreamCluster), Eq("my_upstream_cluster")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpStatusCode), Eq("0")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().Error), Eq(Tracing::Tags::get().True)));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().ResponseSize), Eq("11")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().ResponseFlags), Eq("-")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().RequestSize), Eq("10")));
 
   NiceMock<MockConfig> config;
-  HttpTracerUtility::finalizeSpan(span, nullptr, stream_info, config);
+  HttpTracerUtility::finalizeDownstreamSpan(span, nullptr, nullptr, nullptr, stream_info, config);
 }
 
 TEST(HttpConnManFinalizerImpl, SpanOptionalHeaders) {
@@ -253,35 +260,39 @@ TEST(HttpConnManFinalizerImpl, SpanOptionalHeaders) {
                                           {":path", "/test"},
                                           {":method", "GET"},
                                           {"x-forwarded-proto", "https"}};
+  Http::TestHeaderMapImpl response_headers;
+  Http::TestHeaderMapImpl response_trailers;
   NiceMock<StreamInfo::MockStreamInfo> stream_info;
 
   absl::optional<Http::Protocol> protocol = Http::Protocol::Http10;
   EXPECT_CALL(stream_info, bytesReceived()).WillOnce(Return(10));
-  EXPECT_CALL(stream_info, protocol()).WillOnce(ReturnPointee(&protocol));
+  EXPECT_CALL(stream_info, protocol()).WillRepeatedly(ReturnPointee(&protocol));
   const std::string service_node = "i-453";
 
   // Check that span is populated correctly.
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().GuidXRequestId, "id"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpUrl, "https:///test"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpMethod, "GET"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().UserAgent, "-"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpProtocol, "HTTP/1.0"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().DownstreamCluster, "-"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().RequestSize, "10"));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().GuidXRequestId), Eq("id")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpUrl), Eq("https:///test")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpMethod), Eq("GET")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().UserAgent), Eq("-")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpProtocol), Eq("HTTP/1.0")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().DownstreamCluster), Eq("-")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().RequestSize), Eq("10")));
 
   absl::optional<uint32_t> response_code;
   EXPECT_CALL(stream_info, responseCode()).WillRepeatedly(ReturnPointee(&response_code));
   EXPECT_CALL(stream_info, bytesSent()).WillOnce(Return(100));
   EXPECT_CALL(stream_info, upstreamHost()).WillOnce(Return(nullptr));
 
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpStatusCode, "0"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().Error, Tracing::Tags::get().True));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().ResponseSize, "100"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().ResponseFlags, "-"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().UpstreamCluster, _)).Times(0);
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpStatusCode), Eq("0")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().Error), Eq(Tracing::Tags::get().True)));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().ResponseSize), Eq("100")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().ResponseFlags), Eq("-")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().Component), Eq(Tracing::Tags::get().Proxy)));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().UpstreamCluster), _)).Times(0);
 
   NiceMock<MockConfig> config;
-  HttpTracerUtility::finalizeSpan(span, &request_headers, stream_info, config);
+  HttpTracerUtility::finalizeDownstreamSpan(span, &request_headers, &response_headers,
+                                            &response_trailers, stream_info, config);
 }
 
 TEST(HttpConnManFinalizerImpl, SpanPopulatedFailureResponse) {
@@ -290,6 +301,8 @@ TEST(HttpConnManFinalizerImpl, SpanPopulatedFailureResponse) {
                                           {":path", "/test"},
                                           {":method", "GET"},
                                           {"x-forwarded-proto", "http"}};
+  Http::TestHeaderMapImpl response_headers;
+  Http::TestHeaderMapImpl response_trailers;
   NiceMock<StreamInfo::MockStreamInfo> stream_info;
 
   request_headers.insertHost().value(std::string("api"));
@@ -298,19 +311,19 @@ TEST(HttpConnManFinalizerImpl, SpanPopulatedFailureResponse) {
   request_headers.insertClientTraceId().value(std::string("client_trace_id"));
 
   absl::optional<Http::Protocol> protocol = Http::Protocol::Http10;
-  EXPECT_CALL(stream_info, protocol()).WillOnce(ReturnPointee(&protocol));
+  EXPECT_CALL(stream_info, protocol()).WillRepeatedly(ReturnPointee(&protocol));
   EXPECT_CALL(stream_info, bytesReceived()).WillOnce(Return(10));
   const std::string service_node = "i-453";
 
   // Check that span is populated correctly.
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().GuidXRequestId, "id"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpUrl, "http://api/test"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpMethod, "GET"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().UserAgent, "agent"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpProtocol, "HTTP/1.0"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().DownstreamCluster, "downstream_cluster"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().RequestSize, "10"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().GuidXClientTraceId, "client_trace_id"));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().GuidXRequestId), Eq("id")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpUrl), Eq("http://api/test")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpMethod), Eq("GET")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().UserAgent), Eq("agent")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpProtocol), Eq("HTTP/1.0")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().DownstreamCluster), Eq("downstream_cluster")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().RequestSize), Eq("10")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().GuidXClientTraceId), Eq("client_trace_id")));
 
   // Check that span has tags from custom headers.
   request_headers.addCopy(Http::LowerCaseString("aa"), "a");
@@ -320,10 +333,11 @@ TEST(HttpConnManFinalizerImpl, SpanPopulatedFailureResponse) {
   config.headers_.push_back(Http::LowerCaseString("aa"));
   config.headers_.push_back(Http::LowerCaseString("cc"));
   config.headers_.push_back(Http::LowerCaseString("ee"));
-  EXPECT_CALL(span, setTag("aa", "a"));
-  EXPECT_CALL(span, setTag("cc", "c"));
+  EXPECT_CALL(span, setTag(Eq("aa"), Eq("a")));
+  EXPECT_CALL(span, setTag(Eq("cc"), Eq("c")));
   EXPECT_CALL(config, requestHeadersForTags());
   EXPECT_CALL(config, verbose).WillOnce(Return(false));
+  EXPECT_CALL(config, maxPathTagLength).WillOnce(Return(256));
 
   absl::optional<uint32_t> response_code(503);
   EXPECT_CALL(stream_info, responseCode()).WillRepeatedly(ReturnPointee(&response_code));
@@ -332,13 +346,125 @@ TEST(HttpConnManFinalizerImpl, SpanPopulatedFailureResponse) {
       .WillByDefault(Return(true));
   EXPECT_CALL(stream_info, upstreamHost()).WillOnce(Return(nullptr));
 
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().Error, Tracing::Tags::get().True));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().HttpStatusCode, "503"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().ResponseSize, "100"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().ResponseFlags, "UT"));
-  EXPECT_CALL(span, setTag(Tracing::Tags::get().UpstreamCluster, _)).Times(0);
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().Error), Eq(Tracing::Tags::get().True)));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpStatusCode), Eq("503")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().ResponseSize), Eq("100")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().ResponseFlags), Eq("UT")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().Component), Eq(Tracing::Tags::get().Proxy)));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().UpstreamCluster), _)).Times(0);
 
-  HttpTracerUtility::finalizeSpan(span, &request_headers, stream_info, config);
+  HttpTracerUtility::finalizeDownstreamSpan(span, &request_headers, &response_headers,
+                                            &response_trailers, stream_info, config);
+}
+
+TEST(HttpConnManFinalizerImpl, GrpcOkStatus) {
+  const std::string path_prefix = "http://";
+  NiceMock<MockSpan> span;
+
+  Http::TestHeaderMapImpl request_headers{{":method", "POST"},
+                                          {":scheme", "http"},
+                                          {":path", "/pb.Foo/Bar"},
+                                          {":authority", "example.com:80"},
+                                          {"content-type", "application/grpc"},
+                                          {"te", "trailers"}};
+
+  Http::TestHeaderMapImpl response_headers{{":status", "200"},
+                                           {"content-type", "application/grpc"}};
+  Http::TestHeaderMapImpl response_trailers{{"grpc-status", "0"}, {"grpc-message", ""}};
+  NiceMock<StreamInfo::MockStreamInfo> stream_info;
+
+  absl::optional<Http::Protocol> protocol = Http::Protocol::Http2;
+  absl::optional<uint32_t> response_code(200);
+  EXPECT_CALL(stream_info, responseCode()).WillRepeatedly(ReturnPointee(&response_code));
+  EXPECT_CALL(stream_info, bytesReceived()).WillOnce(Return(10));
+  EXPECT_CALL(stream_info, bytesSent()).WillOnce(Return(11));
+  EXPECT_CALL(stream_info, protocol()).WillRepeatedly(ReturnPointee(&protocol));
+
+  EXPECT_CALL(span, setTag(_, _)).Times(testing::AnyNumber());
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpMethod), Eq("POST")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpProtocol), Eq("HTTP/2")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpStatusCode), Eq("200")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().GrpcStatusCode), Eq("0")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().GrpcMessage), Eq("")));
+
+  NiceMock<MockConfig> config;
+  HttpTracerUtility::finalizeDownstreamSpan(span, &request_headers, &response_headers,
+                                            &response_trailers, stream_info, config);
+}
+
+TEST(HttpConnManFinalizerImpl, GrpcErrorTag) {
+  const std::string path_prefix = "http://";
+  NiceMock<MockSpan> span;
+
+  Http::TestHeaderMapImpl request_headers{{":method", "POST"},
+                                          {":scheme", "http"},
+                                          {":path", "/pb.Foo/Bar"},
+                                          {":authority", "example.com:80"},
+                                          {"content-type", "application/grpc"},
+                                          {"te", "trailers"}};
+
+  Http::TestHeaderMapImpl response_headers{{":status", "200"},
+                                           {"content-type", "application/grpc"}};
+  Http::TestHeaderMapImpl response_trailers{{"grpc-status", "7"},
+                                            {"grpc-message", "permission denied"}};
+  NiceMock<StreamInfo::MockStreamInfo> stream_info;
+
+  absl::optional<Http::Protocol> protocol = Http::Protocol::Http2;
+  absl::optional<uint32_t> response_code(200);
+  EXPECT_CALL(stream_info, responseCode()).WillRepeatedly(ReturnPointee(&response_code));
+  EXPECT_CALL(stream_info, bytesReceived()).WillOnce(Return(10));
+  EXPECT_CALL(stream_info, bytesSent()).WillOnce(Return(11));
+  EXPECT_CALL(stream_info, protocol()).WillRepeatedly(ReturnPointee(&protocol));
+
+  EXPECT_CALL(span, setTag(_, _)).Times(testing::AnyNumber());
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().Error), Eq(Tracing::Tags::get().True)));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpMethod), Eq("POST")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpProtocol), Eq("HTTP/2")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpStatusCode), Eq("200")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().GrpcStatusCode), Eq("7")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().GrpcMessage), Eq("permission denied")));
+
+  NiceMock<MockConfig> config;
+  HttpTracerUtility::finalizeDownstreamSpan(span, &request_headers, &response_headers,
+                                            &response_trailers, stream_info, config);
+}
+
+TEST(HttpConnManFinalizerImpl, GrpcTrailersOnly) {
+  const std::string path_prefix = "http://";
+  NiceMock<MockSpan> span;
+
+  Http::TestHeaderMapImpl request_headers{{":method", "POST"},
+                                          {":scheme", "http"},
+                                          {":path", "/pb.Foo/Bar"},
+                                          {":authority", "example.com:80"},
+                                          {"content-type", "application/grpc"},
+                                          {"te", "trailers"}};
+
+  Http::TestHeaderMapImpl response_headers{{":status", "200"},
+                                           {"content-type", "application/grpc"},
+                                           {"grpc-status", "7"},
+                                           {"grpc-message", "permission denied"}};
+  Http::TestHeaderMapImpl response_trailers;
+  NiceMock<StreamInfo::MockStreamInfo> stream_info;
+
+  absl::optional<Http::Protocol> protocol = Http::Protocol::Http2;
+  absl::optional<uint32_t> response_code(200);
+  EXPECT_CALL(stream_info, responseCode()).WillRepeatedly(ReturnPointee(&response_code));
+  EXPECT_CALL(stream_info, bytesReceived()).WillOnce(Return(10));
+  EXPECT_CALL(stream_info, bytesSent()).WillOnce(Return(11));
+  EXPECT_CALL(stream_info, protocol()).WillRepeatedly(ReturnPointee(&protocol));
+
+  EXPECT_CALL(span, setTag(_, _)).Times(testing::AnyNumber());
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().Error), Eq(Tracing::Tags::get().True)));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpMethod), Eq("POST")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpProtocol), Eq("HTTP/2")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().HttpStatusCode), Eq("200")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().GrpcStatusCode), Eq("7")));
+  EXPECT_CALL(span, setTag(Eq(Tracing::Tags::get().GrpcMessage), Eq("permission denied")));
+
+  NiceMock<MockConfig> config;
+  HttpTracerUtility::finalizeDownstreamSpan(span, &request_headers, &response_headers,
+                                            &response_trailers, stream_info, config);
 }
 
 TEST(HttpTracerUtilityTest, operationTypeToString) {
@@ -351,6 +477,8 @@ TEST(HttpNullTracerTest, BasicFunctionality) {
   MockConfig config;
   StreamInfo::MockStreamInfo stream_info;
   Http::TestHeaderMapImpl request_headers;
+  Http::TestHeaderMapImpl response_headers;
+  Http::TestHeaderMapImpl response_trailers;
 
   SpanPtr span_ptr =
       null_tracer.startSpan(config, request_headers, stream_info, {Reason::Sampling, true});
@@ -373,6 +501,8 @@ public:
 
   Http::TestHeaderMapImpl request_headers_{
       {":path", "/"}, {":method", "GET"}, {"x-request-id", "foo"}, {":authority", "test"}};
+  Http::TestHeaderMapImpl response_headers;
+  Http::TestHeaderMapImpl response_trailers;
   StreamInfo::MockStreamInfo stream_info_;
   NiceMock<LocalInfo::MockLocalInfo> local_info_;
   MockConfig config_;
@@ -399,7 +529,7 @@ TEST_F(HttpTracerImplTest, BasicFunctionalityNodeSet) {
   EXPECT_CALL(*driver_, startSpan_(_, _, operation_name, stream_info_.start_time_, _))
       .WillOnce(Return(span));
   EXPECT_CALL(*span, setTag(_, _)).Times(testing::AnyNumber());
-  EXPECT_CALL(*span, setTag(Tracing::Tags::get().NodeId, "node_name"));
+  EXPECT_CALL(*span, setTag(Eq(Tracing::Tags::get().NodeId), Eq("node_name")));
 
   tracer_->startSpan(config_, request_headers_, stream_info_, {Reason::Sampling, true});
 }

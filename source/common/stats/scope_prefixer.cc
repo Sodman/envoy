@@ -32,16 +32,24 @@ Counter& ScopePrefixer::counterFromStatName(StatName name) {
   return scope_.counterFromStatName(StatName(stat_name_storage.get()));
 }
 
-Gauge& ScopePrefixer::gaugeFromStatName(StatName name) {
+Gauge& ScopePrefixer::gaugeFromStatName(StatName name, Gauge::ImportMode import_mode) {
   Stats::SymbolTable::StoragePtr stat_name_storage =
       scope_.symbolTable().join({prefix_.statName(), name});
-  return scope_.gaugeFromStatName(StatName(stat_name_storage.get()));
+  return scope_.gaugeFromStatName(StatName(stat_name_storage.get()), import_mode);
 }
 
-Histogram& ScopePrefixer::histogramFromStatName(StatName name) {
+Histogram& ScopePrefixer::histogramFromStatName(StatName name, Histogram::Unit unit) {
   Stats::SymbolTable::StoragePtr stat_name_storage =
       scope_.symbolTable().join({prefix_.statName(), name});
-  return scope_.histogramFromStatName(StatName(stat_name_storage.get()));
+  return scope_.histogramFromStatName(StatName(stat_name_storage.get()), unit);
+}
+
+OptionalCounter ScopePrefixer::findCounter(StatName name) const { return scope_.findCounter(name); }
+
+OptionalGauge ScopePrefixer::findGauge(StatName name) const { return scope_.findGauge(name); }
+
+OptionalHistogram ScopePrefixer::findHistogram(StatName name) const {
+  return scope_.findHistogram(name);
 }
 
 void ScopePrefixer::deliverHistogramToSinks(const Histogram& histograms, uint64_t val) {

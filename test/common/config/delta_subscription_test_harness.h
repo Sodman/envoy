@@ -1,6 +1,9 @@
 #pragma once
 
+#include <queue>
+
 #include "common/config/delta_subscription_impl.h"
+#include "common/grpc/common.h"
 
 #include "test/common/config/subscription_test_harness.h"
 #include "test/mocks/config/mocks.h"
@@ -31,27 +34,48 @@ public:
     node_.set_id("fo0");
     EXPECT_CALL(local_info_, node()).WillRepeatedly(testing::ReturnRef(node_));
     EXPECT_CALL(dispatcher_, createTimer_(_));
+    xds_context_ = std::make_shared<NewGrpcMuxImpl>(
+        std::unique_ptr<Grpc::MockAsyncClient>(async_client_), dispatcher_, *method_descriptor_,
+        random_, stats_store_, rate_limit_settings_, local_info_);
     subscription_ = std::make_unique<DeltaSubscriptionImpl>(
-        local_info_, std::unique_ptr<Grpc::MockAsyncClient>(async_client_), dispatcher_,
-        *method_descriptor_, Config::TypeUrl::get().ClusterLoadAssignment, random_, stats_store_,
-        rate_limit_settings_, stats_, init_fetch_timeout);
+        xds_context_, Config::TypeUrl::get().ClusterLoadAssignment, callbacks_, stats_,
+        init_fetch_timeout, false);
+    EXPECT_CALL(*async_client_, startRaw(_, _, _, _)).WillOnce(Return(&async_stream_));
   }
 
-  ~DeltaSubscriptionTestHarness() {
-    ASSERT(nonce_acks_required_ == nonce_acks_sent_,
-           "Not all nonces were ACKd, or there were unexpected ACKs!");
+  void doSubscriptionTearDown() override {
+    if (subscription_started_) {
+      EXPECT_CALL(async_stream_, sendMessageRaw_(_, _));
+      subscription_.reset();
+    }
+  }
+
+  ~DeltaSubscriptionTestHarness() override {
+    while (!nonce_acks_required_.empty()) {
+      if (nonce_acks_sent_.empty()) {
+        // It's not enough to EXPECT_FALSE(nonce_acks_sent_.empty()), we need to skip the following
+        // EXPECT_EQ, otherwise the undefined .front() can get pretty bad.
+        EXPECT_FALSE(nonce_acks_sent_.empty());
+        break;
+      }
+      EXPECT_EQ(nonce_acks_required_.front(), nonce_acks_sent_.front());
+      nonce_acks_required_.pop();
+      nonce_acks_sent_.pop();
+    }
+    EXPECT_TRUE(nonce_acks_sent_.empty());
   }
 
   void startSubscription(const std::set<std::string>& cluster_names) override {
-    EXPECT_CALL(*async_client_, start(_, _)).WillOnce(Return(&async_stream_));
+    subscription_started_ = true;
     last_cluster_names_ = cluster_names;
     expectSendMessage(last_cluster_names_, "");
-    subscription_->start(cluster_names, callbacks_);
+    subscription_->start(cluster_names);
   }
 
-  void expectSendMessage(const std::set<std::string>& cluster_names,
-                         const std::string& version) override {
+  void expectSendMessage(const std::set<std::string>& cluster_names, const std::string& version,
+                         bool expect_node = false) override {
     UNREFERENCED_PARAMETER(version);
+    UNREFERENCED_PARAMETER(expect_node);
     expectSendMessage(cluster_names, {}, Grpc::Status::GrpcStatus::Ok, "", {});
   }
 
@@ -67,7 +91,10 @@ public:
     std::copy(
         unsubscribe.begin(), unsubscribe.end(),
         Protobuf::RepeatedFieldBackInserter(expected_request.mutable_resource_names_unsubscribe()));
-    nonce_acks_required_.insert(last_response_nonce_);
+    if (!last_response_nonce_.empty()) {
+      nonce_acks_required_.push(last_response_nonce_);
+      last_response_nonce_ = "";
+    }
     expected_request.set_type_url(Config::TypeUrl::get().ClusterLoadAssignment);
 
     for (auto const& resource : initial_resource_versions) {
@@ -80,21 +107,25 @@ public:
       error_detail->set_message(error_message);
     }
     EXPECT_CALL(async_stream_,
-                sendMessage(ProtoEqIgnoringField(expected_request, "response_nonce"), false))
-        .WillOnce([this](const Protobuf::Message& message, bool) {
-          nonce_acks_sent_.insert(
-              static_cast<const envoy::api::v2::DeltaDiscoveryRequest&>(message).response_nonce());
+                sendMessageRaw_(
+                    Grpc::ProtoBufferEqIgnoringField(expected_request, "response_nonce"), false))
+        .WillOnce([this](Buffer::InstancePtr& buffer, bool) {
+          envoy::api::v2::DeltaDiscoveryRequest message;
+          EXPECT_TRUE(Grpc::Common::parseBufferInstance(std::move(buffer), message));
+          const std::string nonce = message.response_nonce();
+          if (!nonce.empty()) {
+            nonce_acks_sent_.push(nonce);
+          }
         });
   }
 
   void deliverConfigUpdate(const std::vector<std::string>& cluster_names,
                            const std::string& version, bool accept) override {
-    std::unique_ptr<envoy::api::v2::DeltaDiscoveryResponse> response(
-        new envoy::api::v2::DeltaDiscoveryResponse());
-
+    auto response = std::make_unique<envoy::api::v2::DeltaDiscoveryResponse>();
     last_response_nonce_ = std::to_string(HashUtil::xxHash64(version));
     response->set_nonce(last_response_nonce_);
     response->set_system_version_info(version);
+    response->set_type_url(Config::TypeUrl::get().ClusterLoadAssignment);
 
     Protobuf::RepeatedPtrField<envoy::api::v2::ClusterLoadAssignment> typed_resources;
     for (const auto& cluster : cluster_names) {
@@ -113,14 +144,16 @@ public:
     if (accept) {
       expectSendMessage({}, version);
     } else {
-      EXPECT_CALL(callbacks_, onConfigUpdateFailed(_));
+      EXPECT_CALL(callbacks_, onConfigUpdateFailed(
+                                  Envoy::Config::ConfigUpdateFailureReason::UpdateRejected, _));
       expectSendMessage({}, {}, Grpc::Status::GrpcStatus::Internal, "bad config", {});
     }
-    subscription_->onDiscoveryResponse(std::move(response));
+    static_cast<NewGrpcMuxImpl*>(subscription_->getContextForTest().get())
+        ->onDiscoveryResponse(std::move(response));
     Mock::VerifyAndClearExpectations(&async_stream_);
   }
 
-  void updateResources(const std::set<std::string>& cluster_names) override {
+  void updateResourceInterest(const std::set<std::string>& cluster_names) override {
     std::set<std::string> sub;
     std::set<std::string> unsub;
 
@@ -131,31 +164,32 @@ public:
                         std::inserter(unsub, unsub.begin()));
 
     expectSendMessage(sub, unsub, Grpc::Status::GrpcStatus::Ok, "", {});
-    subscription_->updateResources(cluster_names);
+    subscription_->updateResourceInterest(cluster_names);
     last_cluster_names_ = cluster_names;
   }
 
   void expectConfigUpdateFailed() override {
-    EXPECT_CALL(callbacks_, onConfigUpdateFailed(nullptr));
+    EXPECT_CALL(callbacks_, onConfigUpdateFailed(_, nullptr));
   }
 
   void expectEnableInitFetchTimeoutTimer(std::chrono::milliseconds timeout) override {
     init_timeout_timer_ = new Event::MockTimer(&dispatcher_);
-    EXPECT_CALL(*init_timeout_timer_, enableTimer(std::chrono::milliseconds(timeout)));
+    EXPECT_CALL(*init_timeout_timer_, enableTimer(timeout, _));
   }
 
   void expectDisableInitFetchTimeoutTimer() override {
     EXPECT_CALL(*init_timeout_timer_, disableTimer());
   }
 
-  void callInitFetchTimeoutCb() override { init_timeout_timer_->callback_(); }
+  void callInitFetchTimeoutCb() override { init_timeout_timer_->invokeCallback(); }
 
   const Protobuf::MethodDescriptor* method_descriptor_;
   Grpc::MockAsyncClient* async_client_;
   Event::MockDispatcher dispatcher_;
-  Runtime::MockRandomGenerator random_;
+  NiceMock<Runtime::MockRandomGenerator> random_;
   NiceMock<LocalInfo::MockLocalInfo> local_info_;
   Grpc::MockAsyncStream async_stream_;
+  std::shared_ptr<NewGrpcMuxImpl> xds_context_;
   std::unique_ptr<DeltaSubscriptionImpl> subscription_;
   std::string last_response_nonce_;
   std::set<std::string> last_cluster_names_;
@@ -163,10 +197,9 @@ public:
   Event::MockTimer* init_timeout_timer_;
   envoy::api::v2::core::Node node_;
   NiceMock<Config::MockSubscriptionCallbacks<envoy::api::v2::ClusterLoadAssignment>> callbacks_;
-
-private:
-  std::set<std::string> nonce_acks_required_;
-  std::set<std::string> nonce_acks_sent_;
+  std::queue<std::string> nonce_acks_required_;
+  std::queue<std::string> nonce_acks_sent_;
+  bool subscription_started_{};
 };
 
 } // namespace

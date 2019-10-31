@@ -23,23 +23,26 @@ void MySQLFilter::initializeReadFilterCallbacks(Network::ReadFilterCallbacks& ca
 }
 
 Network::FilterStatus MySQLFilter::onData(Buffer::Instance& data, bool) {
-  doDecode(data);
+  // Safety measure just to make sure that if we have a decoding error we keep going and lose stats.
+  // This can be removed once we are more confident of this code.
+  if (sniffing_) {
+    read_buffer_.add(data);
+    doDecode(read_buffer_);
+  }
   return Network::FilterStatus::Continue;
 }
 
 Network::FilterStatus MySQLFilter::onWrite(Buffer::Instance& data, bool) {
-  doDecode(data);
+  // Safety measure just to make sure that if we have a decoding error we keep going and lose stats.
+  // This can be removed once we are more confident of this code.
+  if (sniffing_) {
+    write_buffer_.add(data);
+    doDecode(write_buffer_);
+  }
   return Network::FilterStatus::Continue;
 }
 
 void MySQLFilter::doDecode(Buffer::Instance& buffer) {
-  // Safety measure just to make sure that if we have a decoding error we keep going and lose stats.
-  // This can be removed once we are more confident of this code.
-  if (!sniffing_) {
-    buffer.drain(buffer.length());
-    return;
-  }
-
   // Clear dynamic metadata.
   envoy::api::v2::core::Metadata& dynamic_metadata =
       read_callbacks_->connection().streamInfo().dynamicMetadata();
@@ -57,6 +60,8 @@ void MySQLFilter::doDecode(Buffer::Instance& buffer) {
     ENVOY_LOG(info, "mysql_proxy: decoding error: {}", e.what());
     config_->stats_.decoder_errors_.inc();
     sniffing_ = false;
+    read_buffer_.drain(read_buffer_.length());
+    write_buffer_.drain(write_buffer_.length());
   }
 }
 
@@ -123,10 +128,10 @@ void MySQLFilter::onCommand(Command& command) {
     }
     hsql::TableAccessMap table_access_map;
     result.getStatement(i)->tablesAccessed(table_access_map);
-    for (auto it = table_access_map.begin(); it != table_access_map.end(); ++it) {
-      auto& operations = *fields[it->first].mutable_list_value();
-      for (auto ot = it->second.begin(); ot != it->second.end(); ++ot) {
-        operations.add_values()->set_string_value(*ot);
+    for (auto& it : table_access_map) {
+      auto& operations = *fields[it.first].mutable_list_value();
+      for (const auto& ot : it.second) {
+        operations.add_values()->set_string_value(ot);
       }
     }
   }

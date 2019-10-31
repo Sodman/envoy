@@ -5,6 +5,7 @@
 #include "common/common/fmt.h"
 #include "common/config/utility.h"
 #include "common/protobuf/utility.h"
+#include "common/stats/symbol_table_impl.h"
 
 #include "server/resource_monitor_config_impl.h"
 
@@ -20,28 +21,38 @@ public:
   ThresholdTriggerImpl(const envoy::config::overload::v2alpha::ThresholdTrigger& config)
       : threshold_(config.value()) {}
 
-  bool updateValue(double value) {
+  bool updateValue(double value) override {
     const bool fired = isFired();
     value_ = value;
     return fired != isFired();
   }
 
-  bool isFired() const { return value_.has_value() && value_ >= threshold_; }
+  bool isFired() const override { return value_.has_value() && value_ >= threshold_; }
 
 private:
   const double threshold_;
   absl::optional<double> value_;
 };
 
-std::string StatsName(const std::string& a, const std::string& b) {
-  return absl::StrCat("overload.", a, ".", b);
+Stats::Counter& makeCounter(Stats::Scope& scope, absl::string_view a, absl::string_view b) {
+  Stats::StatNameManagedStorage stat_name(absl::StrCat("overload.", a, ".", b),
+                                          scope.symbolTable());
+  return scope.counterFromStatName(stat_name.statName());
+}
+
+Stats::Gauge& makeGauge(Stats::Scope& scope, absl::string_view a, absl::string_view b,
+                        Stats::Gauge::ImportMode import_mode) {
+  Stats::StatNameManagedStorage stat_name(absl::StrCat("overload.", a, ".", b),
+                                          scope.symbolTable());
+  return scope.gaugeFromStatName(stat_name.statName(), import_mode);
 }
 
 } // namespace
 
 OverloadAction::OverloadAction(const envoy::config::overload::v2alpha::OverloadAction& config,
                                Stats::Scope& stats_scope)
-    : active_gauge_(stats_scope.gauge(StatsName(config.name(), "active"))) {
+    : active_gauge_(
+          makeGauge(stats_scope, config.name(), "active", Stats::Gauge::ImportMode::Accumulate)) {
   for (const auto& trigger_config : config.triggers()) {
     TriggerPtr trigger;
 
@@ -87,17 +98,18 @@ bool OverloadAction::isActive() const { return !fired_triggers_.empty(); }
 OverloadManagerImpl::OverloadManagerImpl(
     Event::Dispatcher& dispatcher, Stats::Scope& stats_scope,
     ThreadLocal::SlotAllocator& slot_allocator,
-    const envoy::config::overload::v2alpha::OverloadManager& config, Api::Api& api)
+    const envoy::config::overload::v2alpha::OverloadManager& config,
+    ProtobufMessage::ValidationVisitor& validation_visitor, Api::Api& api)
     : started_(false), dispatcher_(dispatcher), tls_(slot_allocator.allocateSlot()),
       refresh_interval_(
           std::chrono::milliseconds(PROTOBUF_GET_MS_OR_DEFAULT(config, refresh_interval, 1000))) {
-  Configuration::ResourceMonitorFactoryContextImpl context(dispatcher, api);
+  Configuration::ResourceMonitorFactoryContextImpl context(dispatcher, api, validation_visitor);
   for (const auto& resource : config.resource_monitors()) {
     const auto& name = resource.name();
     ENVOY_LOG(debug, "Adding resource monitor for {}", name);
     auto& factory =
         Config::Utility::getAndCheckFactory<Configuration::ResourceMonitorFactory>(name);
-    auto config = Config::Utility::translateToFactoryConfig(resource, factory);
+    auto config = Config::Utility::translateToFactoryConfig(resource, validation_visitor, factory);
     auto monitor = factory.createResourceMonitor(*config, context);
 
     auto result =
@@ -118,7 +130,7 @@ OverloadManagerImpl::OverloadManagerImpl(
     }
 
     for (const auto& trigger : action.triggers()) {
-      const std::string resource = trigger.name();
+      const std::string& resource = trigger.name();
 
       if (resources_.find(resource) == resources_.end()) {
         throw EnvoyException(
@@ -210,9 +222,10 @@ void OverloadManagerImpl::updateResourcePressure(const std::string& resource, do
 OverloadManagerImpl::Resource::Resource(const std::string& name, ResourceMonitorPtr monitor,
                                         OverloadManagerImpl& manager, Stats::Scope& stats_scope)
     : name_(name), monitor_(std::move(monitor)), manager_(manager), pending_update_(false),
-      pressure_gauge_(stats_scope.gauge(StatsName(name, "pressure"))),
-      failed_updates_counter_(stats_scope.counter(StatsName(name, "failed_updates"))),
-      skipped_updates_counter_(stats_scope.counter(StatsName(name, "skipped_updates"))) {}
+      pressure_gauge_(
+          makeGauge(stats_scope, name, "pressure", Stats::Gauge::ImportMode::NeverImport)),
+      failed_updates_counter_(makeCounter(stats_scope, name, "failed_updates")),
+      skipped_updates_counter_(makeCounter(stats_scope, name, "skipped_updates")) {}
 
 void OverloadManagerImpl::Resource::update() {
   if (!pending_update_) {

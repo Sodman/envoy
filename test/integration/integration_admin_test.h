@@ -15,6 +15,22 @@ public:
     HttpIntegrationTest::initialize();
   }
 
+  void initialize(envoy::config::metrics::v2::StatsMatcher stats_matcher) {
+    config_helper_.addConfigModifier(
+        [stats_matcher](envoy::config::bootstrap::v2::Bootstrap& bootstrap) -> void {
+          *bootstrap.mutable_stats_config()->mutable_stats_matcher() = stats_matcher;
+        });
+    initialize();
+  }
+
+  absl::string_view request(const std::string port_key, const std::string method,
+                            const std::string endpoint, BufferingStreamDecoderPtr& response) {
+    response = IntegrationUtil::makeSingleRequest(lookupPort(port_key), method, endpoint, "",
+                                                  downstreamProtocol(), version_);
+    EXPECT_TRUE(response->complete());
+    return response->headers().Status()->value().getStringView();
+  }
+
   /**
    *  Destructor for an individual test.
    */
@@ -30,7 +46,7 @@ public:
     Json::ObjectSharedPtr statsjson = Json::Factory::loadFromString(stats_json);
     EXPECT_TRUE(statsjson->hasObject("stats"));
     uint64_t histogram_count = 0;
-    for (Json::ObjectSharedPtr obj_ptr : statsjson->getObjectArray("stats")) {
+    for (const Json::ObjectSharedPtr& obj_ptr : statsjson->getObjectArray("stats")) {
       if (obj_ptr->hasObject("histograms")) {
         histogram_count++;
         const Json::ObjectSharedPtr& histograms_ptr = obj_ptr->getObject("histograms");

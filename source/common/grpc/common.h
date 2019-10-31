@@ -9,6 +9,7 @@
 #include "envoy/http/header_map.h"
 #include "envoy/http/message.h"
 
+#include "common/common/hash.h"
 #include "common/grpc/status.h"
 #include "common/protobuf/protobuf.h"
 
@@ -57,6 +58,15 @@ public:
   static std::string getGrpcMessage(const Http::HeaderMap& trailers);
 
   /**
+   * Returns the decoded google.rpc.Status message from a given set of trailers, if present.
+   * @param trailers the trailers to parse.
+   * @return std::unique_ptr<google::rpc::Status> the gRPC status message or empty pointer if no
+   *         grpc-status-details-bin trailer found or it was invalid.
+   */
+  static absl::optional<google::rpc::Status>
+  getGrpcStatusDetailsBin(const Http::HeaderMap& trailers);
+
+  /**
    * Parse gRPC header 'grpc-timeout' value to a duration in milliseconds.
    * @param request_headers the header map from which to extract the value of 'grpc-timeout' header.
    *        If this header is missing the timeout corresponds to infinity. The header is encoded in
@@ -75,53 +85,14 @@ public:
   static void toGrpcTimeout(const std::chrono::milliseconds& timeout, Http::HeaderString& value);
 
   /**
-   * Charge a success/failure stat to a cluster/service/method.
-   * @param cluster supplies the target cluster.
-   * @param protocol supplies the downstream protocol in use, either gRPC or gRPC-Web.
-   * @param grpc_service supplies the service name.
-   * @param grpc_method supplies the method name.
-   * @param grpc_status supplies the gRPC status.
+   * Serialize protobuf message with gRPC frame header.
    */
-  static void chargeStat(const Upstream::ClusterInfo& cluster, const std::string& protocol,
-                         const std::string& grpc_service, const std::string& grpc_method,
-                         const Http::HeaderEntry* grpc_status);
+  static Buffer::InstancePtr serializeToGrpcFrame(const Protobuf::Message& message);
 
   /**
-   * Charge a success/failure stat to a cluster/service/method.
-   * @param cluster supplies the target cluster.
-   * @param protocol supplies the downstream protocol in use, either "grpc" or "grpc-web".
-   * @param grpc_service supplies the service name.
-   * @param grpc_method supplies the method name.
-   * @param success supplies whether the call succeeded.
+   * Serialize protobuf message. Without grpc header.
    */
-  static void chargeStat(const Upstream::ClusterInfo& cluster, const std::string& protocol,
-                         const std::string& grpc_service, const std::string& grpc_method,
-                         bool success);
-
-  /**
-   * Charge a success/failure stat to a cluster/service/method.
-   * @param cluster supplies the target cluster.
-   * @param grpc_service supplies the service name.
-   * @param grpc_method supplies the method name.
-   * @param success supplies whether the call succeeded.
-   */
-  static void chargeStat(const Upstream::ClusterInfo& cluster, const std::string& grpc_service,
-                         const std::string& grpc_method, bool success);
-
-  /**
-   * Resolve the gRPC service and method from the HTTP2 :path header.
-   * @param path supplies the :path header.
-   * @param service supplies the output pointer of the gRPC service.
-   * @param method supplies the output pointer of the gRPC method.
-   * @return bool true if both gRPC serve and method have been resolved successfully.
-   */
-  static bool resolveServiceAndMethod(const Http::HeaderEntry* path, std::string* service,
-                                      std::string* method);
-
-  /**
-   * Serialize protobuf message.
-   */
-  static Buffer::InstancePtr serializeBody(const Protobuf::Message& message);
+  static Buffer::InstancePtr serializeMessage(const Protobuf::Message& message);
 
   /**
    * Prepare headers for protobuf service.
@@ -147,6 +118,20 @@ public:
    * @return qualified_name prefixed with typeUrlPrefix + "/".
    */
   static std::string typeUrl(const std::string& qualified_name);
+
+  /**
+   * Prepend a gRPC frame header to a Buffer::Instance containing a single gRPC frame.
+   * @param buffer containing the frame data which will be modified.
+   */
+  static void prependGrpcFrameHeader(Buffer::Instance& buffer);
+
+  /**
+   * Parse a Buffer::Instance into a Protobuf::Message.
+   * @param buffer containing the data to be parsed.
+   * @param proto the parsed proto.
+   * @return bool true if the parse was successful.
+   */
+  static bool parseBufferInstance(Buffer::InstancePtr&& buffer, Protobuf::Message& proto);
 
 private:
   static void checkForHeaderOnlyError(Http::Message& http_response);

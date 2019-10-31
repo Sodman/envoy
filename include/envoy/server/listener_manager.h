@@ -18,7 +18,7 @@ namespace Server {
  */
 class LdsApi {
 public:
-  virtual ~LdsApi() {}
+  virtual ~LdsApi() = default;
 
   /**
    * @return std::string the last received version by the xDS API for LDS.
@@ -26,14 +26,14 @@ public:
   virtual std::string versionInfo() const PURE;
 };
 
-typedef std::unique_ptr<LdsApi> LdsApiPtr;
+using LdsApiPtr = std::unique_ptr<LdsApi>;
 
 /**
  * Factory for creating listener components.
  */
 class ListenerComponentFactory {
 public:
-  virtual ~ListenerComponentFactory() {}
+  virtual ~ListenerComponentFactory() = default;
 
   /**
    * @return an LDS API provider.
@@ -75,6 +75,16 @@ public:
       Configuration::ListenerFactoryContext& context) PURE;
 
   /**
+   * Creates a list of UDP listener filter factories.
+   * @param filters supplies the configuration.
+   * @param context supplies the factory creation context.
+   * @return std::vector<Network::UdpListenerFilterFactoryCb> the list of filter factories.
+   */
+  virtual std::vector<Network::UdpListenerFilterFactoryCb> createUdpListenerFilterFactoryList(
+      const Protobuf::RepeatedPtrField<envoy::api::v2::listener::ListenerFilter>& filters,
+      Configuration::ListenerFactoryContext& context) PURE;
+
+  /**
    * @return DrainManagerPtr a new drain manager.
    * @param drain_type supplies the type of draining to do for the owning listener.
    */
@@ -91,7 +101,15 @@ public:
  */
 class ListenerManager {
 public:
-  virtual ~ListenerManager() {}
+  // Indicates listeners to stop.
+  enum class StopListenersType {
+    // Listeners in the inbound direction are only stopped.
+    InboundOnly,
+    // All listeners are stopped.
+    All,
+  };
+
+  virtual ~ListenerManager() = default;
 
   /**
    * Add or update a listener. Listeners are referenced by a unique name. If no name is provided,
@@ -149,9 +167,11 @@ public:
 
   /**
    * Stop all listeners from accepting new connections without actually removing any of them. This
-   * is used for server draining.
+   * is used for server draining and /drain_listeners admin endpoint. This method directly stops the
+   * listeners on workers. Once a listener is stopped, any listener modifications are not allowed.
+   * @param stop_listeners_type indicates listeners to stop.
    */
-  virtual void stopListeners() PURE;
+  virtual void stopListeners(StopListenersType stop_listeners_type) PURE;
 
   /**
    * Stop all threaded workers from running. When this routine returns all worker threads will

@@ -2,9 +2,12 @@
 
 #include <atomic>
 
+#include "envoy/common/time.h"
+
 #include "common/buffer/buffer_impl.h"
 #include "common/event/event_impl_base.h"
 #include "common/event/file_event_impl.h"
+#include "common/network/utility.h"
 
 #include "base_listener_impl.h"
 
@@ -14,31 +17,45 @@ namespace Network {
 /**
  * libevent implementation of Network::Listener for UDP.
  */
-class UdpListenerImpl : public BaseListenerImpl {
+class UdpListenerImpl : public BaseListenerImpl,
+                        public virtual UdpListener,
+                        public UdpPacketProcessor,
+                        protected Logger::Loggable<Logger::Id::udp> {
 public:
-  UdpListenerImpl(Event::DispatcherImpl& dispatcher, Socket& socket, UdpListenerCallbacks& cb);
+  UdpListenerImpl(Event::DispatcherImpl& dispatcher, Socket& socket, UdpListenerCallbacks& cb,
+                  TimeSource& time_source);
 
-  ~UdpListenerImpl();
+  ~UdpListenerImpl() override;
 
-  virtual void disable() override;
-  virtual void enable() override;
+  // Network::Listener Interface
+  void disable() override;
+  void enable() override;
 
-  struct ReceiveResult {
-    Api::SysCallIntResult result_;
-    Buffer::InstancePtr buffer_;
-  };
+  // Network::UdpListener Interface
+  Event::Dispatcher& dispatcher() override;
+  const Address::InstanceConstSharedPtr& localAddress() const override;
+  Api::IoCallUint64Result send(const UdpSendData& data) override;
 
-  // Useful for testing/mocking.
-  virtual ReceiveResult doRecvFrom(sockaddr_storage& peer_addr, socklen_t& addr_len);
+  void processPacket(Address::InstanceConstSharedPtr local_address,
+                     Address::InstanceConstSharedPtr peer_address, Buffer::InstancePtr buffer,
+                     MonotonicTime receive_time) override;
+
+  uint64_t maxPacketSize() const override {
+    // TODO(danzh) make this variable configurable to support jumbo frames.
+    return MAX_UDP_PACKET_SIZE;
+  }
 
 protected:
   void handleWriteCallback();
   void handleReadCallback();
 
   UdpListenerCallbacks& cb_;
+  uint32_t packets_dropped_{0};
 
 private:
   void onSocketEvent(short flags);
+
+  TimeSource& time_source_;
   Event::FileEventPtr file_event_;
 };
 

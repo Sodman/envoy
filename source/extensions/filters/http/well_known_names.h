@@ -30,6 +30,8 @@ public:
   const std::string GrpcWeb = "envoy.grpc_web";
   // GRPC http1 reverse bridge filter
   const std::string GrpcHttp1ReverseBridge = "envoy.filters.http.grpc_http1_reverse_bridge";
+  // GRPC telemetry
+  const std::string GrpcStats = "envoy.filters.http.grpc_stats";
   // Gzip filter
   const std::string EnvoyGzip = "envoy.gzip";
   // IP tagging filter
@@ -54,6 +56,12 @@ public:
   const std::string HeaderToMetadata = "envoy.filters.http.header_to_metadata";
   // Tap filter
   const std::string Tap = "envoy.filters.http.tap";
+  // Adaptive concurrency limit filter
+  const std::string AdaptiveConcurrency = "envoy.filters.http.adaptive_concurrency";
+  // Original Src Filter
+  const std::string OriginalSrc = "envoy.filters.http.original_src";
+  // Dynamic forward proxy filter
+  const std::string DynamicForwardProxy = "envoy.filters.http.dynamic_forward_proxy";
 
   // Converts names from v1 to v2
   const Config::V1Converter v1_converter_;
@@ -65,7 +73,7 @@ public:
                        ExtAuthorization}) {}
 };
 
-typedef ConstSingleton<HttpFilterNameValues> HttpFilterNames;
+using HttpFilterNames = ConstSingleton<HttpFilterNameValues>;
 
 } // namespace HttpFilters
 } // namespace Extensions

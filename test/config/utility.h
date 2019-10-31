@@ -64,13 +64,15 @@ public:
   static void initializeTls(const ServerSslOptions& options,
                             envoy::api::v2::auth::CommonTlsContext& common_context);
 
-  typedef std::function<void(envoy::config::bootstrap::v2::Bootstrap&)> ConfigModifierFunction;
-  typedef std::function<void(
-      envoy::config::filter::network::http_connection_manager::v2::HttpConnectionManager&)>
-      HttpModifierFunction;
+  using ConfigModifierFunction = std::function<void(envoy::config::bootstrap::v2::Bootstrap&)>;
+  using HttpModifierFunction = std::function<void(
+      envoy::config::filter::network::http_connection_manager::v2::HttpConnectionManager&)>;
 
   // A basic configuration (admin port, cluster_0, one listener) with no network filters.
   static const std::string BASE_CONFIG;
+
+  // A basic configuration (admin port, cluster_0, one udp listener) with no network filters.
+  static const std::string BASE_UDP_LISTENER_CONFIG;
 
   // A basic configuration for L4 proxying.
   static const std::string TCP_PROXY_CONFIG;
@@ -89,6 +91,7 @@ public:
   // Configuration for L7 proxying, with clusters cluster_1 and cluster_2 meant to be added via CDS.
   // api_type should be REST, GRPC, or DELTA_GRPC.
   static std::string discoveredClustersBootstrap(const std::string& api_type);
+  static std::string adsBootstrap(const std::string& api_type);
   // Builds a standard Cluster config fragment, with a single endpoint (at loopback:port).
   static envoy::api::v2::Cluster buildCluster(const std::string& name, int port,
                                               const std::string& ip_version);
@@ -107,6 +110,12 @@ public:
 
   // Sets byte limits on upstream and downstream connections.
   void setBufferLimits(uint32_t upstream_buffer_limit, uint32_t downstream_buffer_limit);
+
+  // Set the idle timeout on downstream connections through the HttpConnectionManager.
+  void setDownstreamHttpIdleTimeout(std::chrono::milliseconds idle_timeout);
+
+  // Set the max connection duration for downstream connections through the HttpConnectionManager.
+  void setDownstreamMaxConnectionDuration(std::chrono::milliseconds max_connection_duration);
 
   // Set the connect timeout on upstream connections.
   void setConnectTimeout(std::chrono::milliseconds timeout);
@@ -143,8 +152,22 @@ public:
   // Modifiers will be applied just before ports are modified in finalize
   void addConfigModifier(HttpModifierFunction function);
 
+  // Apply any outstanding config modifiers, stick all the listeners in a discovery response message
+  // and write it to the lds file.
+  void setLds(absl::string_view version_info);
+
+  // Set limits on pending outbound frames.
+  void setOutboundFramesLimits(uint32_t max_all_frames, uint32_t max_control_frames);
+
   // Return the bootstrap configuration for hand-off to Envoy.
   const envoy::config::bootstrap::v2::Bootstrap& bootstrap() { return bootstrap_; }
+
+  // Allow a finalized configuration to be edited for generating xDS responses
+  void applyConfigModifiers();
+
+  // Skip validation that ensures that all upstream ports are referenced by the
+  // configuration generated in ConfigHelper::finalize.
+  void skipPortUsageValidation() { skip_port_usage_validation_ = true; }
 
 private:
   // Load the first HCM struct from the first listener into a parsed proto.
@@ -174,8 +197,26 @@ private:
   // default).
   bool connect_timeout_set_{false};
 
+  // Option to disable port usage validation for cases where the number of
+  // upstream ports created is expected to be larger than the number of
+  // upstreams in the config.
+  bool skip_port_usage_validation_{false};
+
   // A sanity check guard to make sure config is not modified after handing it to Envoy.
   bool finalized_{false};
+};
+
+class CdsHelper {
+public:
+  CdsHelper();
+
+  // Set CDS contents on filesystem.
+  void setCds(const std::vector<envoy::api::v2::Cluster>& cluster);
+  const std::string& cds_path() const { return cds_path_; }
+
+private:
+  const std::string cds_path_;
+  uint32_t cds_version_{};
 };
 
 // Common code for tests that deliver EDS update via the filesystem.
@@ -184,8 +225,10 @@ public:
   EdsHelper();
 
   // Set EDS contents on filesystem and wait for Envoy to pick this up.
-  void setEds(const std::vector<envoy::api::v2::ClusterLoadAssignment>& cluster_load_assignments,
-              IntegrationTestServerStats& server_stats);
+  void setEds(const std::vector<envoy::api::v2::ClusterLoadAssignment>& cluster_load_assignments);
+  void
+  setEdsAndWait(const std::vector<envoy::api::v2::ClusterLoadAssignment>& cluster_load_assignments,
+                IntegrationTestServerStats& server_stats);
   const std::string& eds_path() const { return eds_path_; }
 
 private:

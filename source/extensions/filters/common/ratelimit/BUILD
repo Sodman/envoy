@@ -22,11 +22,12 @@ envoy_cc_library(
         "//include/envoy/upstream:cluster_manager_interface",
         "//source/common/common:assert_lib",
         "//source/common/common:minimal_logger_lib",
+        "//source/common/grpc:typed_async_client_lib",
         "//source/common/http:headers_lib",
         "//source/common/tracing:http_tracer_lib",
-        "@envoy_api//envoy/api/v2/ratelimit:ratelimit_cc",
-        "@envoy_api//envoy/config/ratelimit/v2:rls_cc",
-        "@envoy_api//envoy/service/ratelimit/v2:rls_cc",
+        "@envoy_api//envoy/api/v2/ratelimit:pkg_cc_proto",
+        "@envoy_api//envoy/config/ratelimit/v2:pkg_cc_proto",
+        "@envoy_api//envoy/service/ratelimit/v2:pkg_cc_proto",
     ],
 )
 
@@ -38,6 +39,15 @@ envoy_cc_library(
         "//include/envoy/ratelimit:ratelimit_interface",
         "//include/envoy/singleton:manager_interface",
         "//include/envoy/tracing:http_tracer_interface",
-        "@envoy_api//envoy/config/ratelimit/v2:rls_cc",
+        "//source/common/stats:symbol_table_lib",
+        "@envoy_api//envoy/config/ratelimit/v2:pkg_cc_proto",
+    ],
+)
+
+envoy_cc_library(
+    name = "stat_names_lib",
+    hdrs = ["stat_names.h"],
+    deps = [
+        "//source/common/stats:symbol_table_lib",
     ],
 )

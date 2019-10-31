@@ -2,16 +2,20 @@
 
 #include <arpa/inet.h>
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <string>
 
 #include "common/buffer/buffer_impl.h"
+#include "common/buffer/zero_copy_input_stream_impl.h"
 #include "common/common/assert.h"
+#include "common/common/base64.h"
 #include "common/common/empty_string.h"
 #include "common/common/enum_to_int.h"
 #include "common/common/fmt.h"
 #include "common/common/macros.h"
+#include "common/common/stack_array.h"
 #include "common/common/utility.h"
 #include "common/http/headers.h"
 #include "common/http/message_impl.h"
@@ -46,52 +50,18 @@ bool Common::isGrpcResponseHeader(const Http::HeaderMap& headers, bool end_strea
   return hasGrpcContentType(headers);
 }
 
-void Common::chargeStat(const Upstream::ClusterInfo& cluster, const std::string& protocol,
-                        const std::string& grpc_service, const std::string& grpc_method,
-                        const Http::HeaderEntry* grpc_status) {
-  if (!grpc_status) {
-    return;
-  }
-  cluster.statsScope()
-      .counter(fmt::format("{}.{}.{}.{}", protocol, grpc_service, grpc_method,
-                           grpc_status->value().getStringView()))
-      .inc();
-  uint64_t grpc_status_code;
-  // TODO(dnoe): Migrate to pure string_view (#6580)
-  const bool success = absl::SimpleAtoi(grpc_status->value().getStringView(), &grpc_status_code) &&
-                       grpc_status_code == 0;
-  chargeStat(cluster, protocol, grpc_service, grpc_method, success);
-}
-
-void Common::chargeStat(const Upstream::ClusterInfo& cluster, const std::string& protocol,
-                        const std::string& grpc_service, const std::string& grpc_method,
-                        bool success) {
-  cluster.statsScope()
-      .counter(fmt::format("{}.{}.{}.{}", protocol, grpc_service, grpc_method,
-                           success ? "success" : "failure"))
-      .inc();
-  cluster.statsScope()
-      .counter(fmt::format("{}.{}.{}.total", protocol, grpc_service, grpc_method))
-      .inc();
-}
-
-void Common::chargeStat(const Upstream::ClusterInfo& cluster, const std::string& grpc_service,
-                        const std::string& grpc_method, bool success) {
-  chargeStat(cluster, "grpc", grpc_service, grpc_method, success);
-}
-
 absl::optional<Status::GrpcStatus> Common::getGrpcStatus(const Http::HeaderMap& trailers) {
   const Http::HeaderEntry* grpc_status_header = trailers.GrpcStatus();
 
   uint64_t grpc_status_code;
   if (!grpc_status_header || grpc_status_header->value().empty()) {
-    return absl::optional<Status::GrpcStatus>();
+    return absl::nullopt;
   }
   if (!absl::SimpleAtoi(grpc_status_header->value().getStringView(), &grpc_status_code) ||
       grpc_status_code > Status::GrpcStatus::MaximumValid) {
-    return absl::optional<Status::GrpcStatus>(Status::GrpcStatus::InvalidCode);
+    return {Status::GrpcStatus::InvalidCode};
   }
-  return absl::optional<Status::GrpcStatus>(static_cast<Status::GrpcStatus>(grpc_status_code));
+  return {static_cast<Status::GrpcStatus>(grpc_status_code)};
 }
 
 std::string Common::getGrpcMessage(const Http::HeaderMap& trailers) {
@@ -99,23 +69,32 @@ std::string Common::getGrpcMessage(const Http::HeaderMap& trailers) {
   return entry ? std::string(entry->value().getStringView()) : EMPTY_STRING;
 }
 
-bool Common::resolveServiceAndMethod(const Http::HeaderEntry* path, std::string* service,
-                                     std::string* method) {
-  if (path == nullptr) {
-    return false;
+absl::optional<google::rpc::Status>
+Common::getGrpcStatusDetailsBin(const Http::HeaderMap& trailers) {
+  const Http::HeaderEntry* details_header = trailers.get(Http::Headers::get().GrpcStatusDetailsBin);
+  if (!details_header) {
+    return absl::nullopt;
   }
-  const auto parts = StringUtil::splitToken(path->value().getStringView(), "/");
-  if (parts.size() != 2) {
-    return false;
+
+  // Some implementations use non-padded base64 encoding for grpc-status-details-bin.
+  auto decoded_value = Base64::decodeWithoutPadding(details_header->value().getStringView());
+  if (decoded_value.empty()) {
+    return absl::nullopt;
   }
-  service->assign(parts[0].data(), parts[0].size());
-  method->assign(parts[1].data(), parts[1].size());
-  return true;
+
+  google::rpc::Status status;
+  if (!status.ParseFromString(decoded_value)) {
+    return absl::nullopt;
+  }
+
+  return {std::move(status)};
 }
 
-Buffer::InstancePtr Common::serializeBody(const Protobuf::Message& message) {
+Buffer::InstancePtr Common::serializeToGrpcFrame(const Protobuf::Message& message) {
   // http://www.grpc.io/docs/guides/wire.html
   // Reserve enough space for the entire message and the 5 byte header.
+  // NB: we do not use prependGrpcFrameHeader because that would add another BufferFragment and this
+  // (using a single BufferFragment) is more efficient.
   Buffer::InstancePtr body(new Buffer::OwnedImpl());
   const uint32_t size = message.ByteSize();
   const uint32_t alloc_size = size + 5;
@@ -128,6 +107,21 @@ Buffer::InstancePtr Common::serializeBody(const Protobuf::Message& message) {
   const uint32_t nsize = htonl(size);
   std::memcpy(current, reinterpret_cast<const void*>(&nsize), sizeof(uint32_t));
   current += sizeof(uint32_t);
+  Protobuf::io::ArrayOutputStream stream(current, size, -1);
+  Protobuf::io::CodedOutputStream codec_stream(&stream);
+  message.SerializeWithCachedSizes(&codec_stream);
+  body->commit(&iovec, 1);
+  return body;
+}
+
+Buffer::InstancePtr Common::serializeMessage(const Protobuf::Message& message) {
+  auto body = std::make_unique<Buffer::OwnedImpl>();
+  const uint32_t size = message.ByteSize();
+  Buffer::RawSlice iovec;
+  body->reserve(size, &iovec, 1);
+  ASSERT(iovec.len_ >= size);
+  iovec.len_ = size;
+  uint8_t* current = reinterpret_cast<uint8_t*>(iovec.mem_);
   Protobuf::io::ArrayOutputStream stream(current, size, -1);
   Protobuf::io::CodedOutputStream codec_stream(&stream);
   message.SerializeWithCachedSizes(&codec_stream);
@@ -266,6 +260,19 @@ const std::string& Common::typeUrlPrefix() {
 
 std::string Common::typeUrl(const std::string& qualified_name) {
   return typeUrlPrefix() + "/" + qualified_name;
+}
+
+void Common::prependGrpcFrameHeader(Buffer::Instance& buffer) {
+  std::array<char, 5> header;
+  header[0] = 0; // flags
+  const uint32_t nsize = htonl(buffer.length());
+  std::memcpy(&header[1], reinterpret_cast<const void*>(&nsize), sizeof(uint32_t));
+  buffer.prepend(absl::string_view(&header[0], 5));
+}
+
+bool Common::parseBufferInstance(Buffer::InstancePtr&& buffer, Protobuf::Message& proto) {
+  Buffer::ZeroCopyInputStreamImpl stream(std::move(buffer));
+  return proto.ParseFromZeroCopyStream(&stream);
 }
 
 } // namespace Grpc

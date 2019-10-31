@@ -11,6 +11,8 @@
 namespace Envoy {
 namespace Tracing {
 
+constexpr uint32_t DefaultMaxPathTagLength = 256;
+
 enum class OperationName { Ingress, Egress };
 
 /**
@@ -42,7 +44,7 @@ struct Decision {
  */
 class Config {
 public:
-  virtual ~Config() {}
+  virtual ~Config() = default;
 
   /**
    * @return operation name for tracing, e.g., ingress.
@@ -58,30 +60,35 @@ public:
    * @return true if spans should be annotated with more detailed information.
    */
   virtual bool verbose() const PURE;
+
+  /**
+   * @return the maximum length allowed for paths in the extracted HttpUrl tag.
+   */
+  virtual uint32_t maxPathTagLength() const PURE;
 };
 
 class Span;
-typedef std::unique_ptr<Span> SpanPtr;
+using SpanPtr = std::unique_ptr<Span>;
 
 /**
  * Basic abstraction for span.
  */
 class Span {
 public:
-  virtual ~Span() {}
+  virtual ~Span() = default;
 
   /**
    * Set the operation name.
    * @param operation the operation name
    */
-  virtual void setOperation(const std::string& operation) PURE;
+  virtual void setOperation(absl::string_view operation) PURE;
 
   /**
    * Attach metadata to a Span, to be handled in an implementation-dependent fashion.
    * @param name the name of the tag
    * @param value the value to associate with the tag
    */
-  virtual void setTag(const std::string& name, const std::string& value) PURE;
+  virtual void setTag(absl::string_view name, absl::string_view value) PURE;
 
   /**
    * Record an event associated with a span, to be handled in an implementation-dependent fashion.
@@ -126,7 +133,7 @@ public:
  */
 class Driver {
 public:
-  virtual ~Driver() {}
+  virtual ~Driver() = default;
 
   /**
    * Start driver specific span.
@@ -136,7 +143,7 @@ public:
                             const Tracing::Decision tracing_decision) PURE;
 };
 
-typedef std::unique_ptr<Driver> DriverPtr;
+using DriverPtr = std::unique_ptr<Driver>;
 
 /**
  * HttpTracer is responsible for handling traces and delegate actions to the
@@ -144,14 +151,14 @@ typedef std::unique_ptr<Driver> DriverPtr;
  */
 class HttpTracer {
 public:
-  virtual ~HttpTracer() {}
+  virtual ~HttpTracer() = default;
 
   virtual SpanPtr startSpan(const Config& config, Http::HeaderMap& request_headers,
                             const StreamInfo::StreamInfo& stream_info,
                             const Tracing::Decision tracing_decision) PURE;
 };
 
-typedef std::unique_ptr<HttpTracer> HttpTracerPtr;
+using HttpTracerPtr = std::unique_ptr<HttpTracer>;
 
 } // namespace Tracing
 } // namespace Envoy

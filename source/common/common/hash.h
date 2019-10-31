@@ -101,7 +101,7 @@ struct HeterogeneousStringHash {
   // https://en.cppreference.com/w/cpp/utility/functional/less_void for an
   // official reference, and https://abseil.io/tips/144 for a description of
   // using it in the context of absl.
-  using is_transparent = void;
+  using is_transparent = void; // NOLINT(readability-identifier-naming)
 
   size_t operator()(absl::string_view a) const { return HashUtil::xxHash64(a); }
   size_t operator()(const SharedString& a) const { return HashUtil::xxHash64(*a); }
@@ -109,7 +109,7 @@ struct HeterogeneousStringHash {
 
 struct HeterogeneousStringEqual {
   // See description for HeterogeneousStringHash::is_transparent.
-  using is_transparent = void;
+  using is_transparent = void; // NOLINT(readability-identifier-naming)
 
   size_t operator()(absl::string_view a, absl::string_view b) const { return a == b; }
   size_t operator()(const SharedString& a, const SharedString& b) const { return *a == *b; }
@@ -121,5 +121,9 @@ struct HeterogeneousStringEqual {
 // a shared_string, which would entail making a full copy of the stat name.
 using SharedStringSet =
     absl::flat_hash_set<SharedString, HeterogeneousStringHash, HeterogeneousStringEqual>;
+
+template <class Value>
+using StringMap =
+    absl::flat_hash_map<std::string, Value, HeterogeneousStringHash, HeterogeneousStringEqual>;
 
 } // namespace Envoy

@@ -24,6 +24,7 @@
 #include "envoy/upstream/resource_manager.h"
 #include "envoy/upstream/types.h"
 
+#include "absl/strings/string_view.h"
 #include "absl/types/optional.h"
 
 namespace Envoy {
@@ -54,7 +55,9 @@ public:
   m(DEGRADED_EDS_HEALTH, 0x10)                                                   \
   /* The host is pending removal from discovery but is stabilized due to */      \
   /* active HC. */                                                               \
-  m(PENDING_DYNAMIC_REMOVAL, 0x20)
+  m(PENDING_DYNAMIC_REMOVAL, 0x20)                                               \
+  /* The host is pending its initial active health check. */                     \
+  m(PENDING_ACTIVE_HC, 0x40)
   // clang-format on
 
 #define DECLARE_ENUM(name, value) name = value,
@@ -75,7 +78,8 @@ public:
   /**
    * @return host specific counters.
    */
-  virtual std::vector<Stats::CounterSharedPtr> counters() const PURE;
+  virtual std::vector<std::pair<absl::string_view, Stats::PrimitiveCounterReference>>
+  counters() const PURE;
 
   /**
    * Create a connection for this host.
@@ -103,7 +107,8 @@ public:
   /**
    * @return host specific gauges.
    */
-  virtual std::vector<Stats::GaugeSharedPtr> gauges() const PURE;
+  virtual std::vector<std::pair<absl::string_view, Stats::PrimitiveGaugeReference>>
+  gauges() const PURE;
 
   /**
    * Atomically clear a health flag for a host. Flags are specified in HealthFlags.
@@ -192,29 +197,31 @@ public:
   virtual void used(bool new_used) PURE;
 };
 
-typedef std::shared_ptr<const Host> HostConstSharedPtr;
+using HostConstSharedPtr = std::shared_ptr<const Host>;
 
-typedef std::vector<HostSharedPtr> HostVector;
-typedef Phantom<HostVector, Healthy> HealthyHostVector;
-typedef Phantom<HostVector, Degraded> DegradedHostVector;
-typedef std::unordered_map<std::string, Upstream::HostSharedPtr> HostMap;
-typedef std::shared_ptr<HostVector> HostVectorSharedPtr;
-typedef std::shared_ptr<const HostVector> HostVectorConstSharedPtr;
+using HostVector = std::vector<HostSharedPtr>;
+using HealthyHostVector = Phantom<HostVector, Healthy>;
+using DegradedHostVector = Phantom<HostVector, Degraded>;
+using ExcludedHostVector = Phantom<HostVector, Excluded>;
+using HostMap = std::unordered_map<std::string, Upstream::HostSharedPtr>;
+using HostVectorSharedPtr = std::shared_ptr<HostVector>;
+using HostVectorConstSharedPtr = std::shared_ptr<const HostVector>;
 
-typedef std::shared_ptr<const HealthyHostVector> HealthyHostVectorConstSharedPtr;
-typedef std::shared_ptr<const DegradedHostVector> DegradedHostVectorConstSharedPtr;
+using HealthyHostVectorConstSharedPtr = std::shared_ptr<const HealthyHostVector>;
+using DegradedHostVectorConstSharedPtr = std::shared_ptr<const DegradedHostVector>;
+using ExcludedHostVectorConstSharedPtr = std::shared_ptr<const ExcludedHostVector>;
 
-typedef std::unique_ptr<HostVector> HostListPtr;
-typedef std::unordered_map<envoy::api::v2::core::Locality, uint32_t, LocalityHash, LocalityEqualTo>
-    LocalityWeightsMap;
-typedef std::vector<std::pair<HostListPtr, LocalityWeightsMap>> PriorityState;
+using HostListPtr = std::unique_ptr<HostVector>;
+using LocalityWeightsMap =
+    std::unordered_map<envoy::api::v2::core::Locality, uint32_t, LocalityHash, LocalityEqualTo>;
+using PriorityState = std::vector<std::pair<HostListPtr, LocalityWeightsMap>>;
 
 /**
  * Bucket hosts by locality.
  */
 class HostsPerLocality {
 public:
-  virtual ~HostsPerLocality() {}
+  virtual ~HostsPerLocality() = default;
 
   /**
    * @return bool is local locality one of the locality buckets? If so, the
@@ -248,26 +255,32 @@ public:
   }
 };
 
-typedef std::shared_ptr<HostsPerLocality> HostsPerLocalitySharedPtr;
-typedef std::shared_ptr<const HostsPerLocality> HostsPerLocalityConstSharedPtr;
+using HostsPerLocalitySharedPtr = std::shared_ptr<HostsPerLocality>;
+using HostsPerLocalityConstSharedPtr = std::shared_ptr<const HostsPerLocality>;
 
 // Weight for each locality index in HostsPerLocality.
-typedef std::vector<uint32_t> LocalityWeights;
-typedef std::shared_ptr<LocalityWeights> LocalityWeightsSharedPtr;
-typedef std::shared_ptr<const LocalityWeights> LocalityWeightsConstSharedPtr;
+using LocalityWeights = std::vector<uint32_t>;
+using LocalityWeightsSharedPtr = std::shared_ptr<LocalityWeights>;
+using LocalityWeightsConstSharedPtr = std::shared_ptr<const LocalityWeights>;
 
 /**
  * Base host set interface. This contains all of the endpoints for a given LocalityLbEndpoints
  * priority level.
  */
+// TODO(snowp): Remove the const ref accessors in favor of the shared_ptr ones.
 class HostSet {
 public:
-  virtual ~HostSet() {}
+  virtual ~HostSet() = default;
 
   /**
    * @return all hosts that make up the set at the current time.
    */
   virtual const HostVector& hosts() const PURE;
+
+  /**
+   * @return a shared ptr to the vector returned by hosts().
+   */
+  virtual HostVectorConstSharedPtr hostsPtr() const PURE;
 
   /**
    * @return all healthy hosts contained in the set at the current time. NOTE: This set is
@@ -278,6 +291,11 @@ public:
   virtual const HostVector& healthyHosts() const PURE;
 
   /**
+   * @return a shared ptr to the vector returned by healthyHosts().
+   */
+  virtual HealthyHostVectorConstSharedPtr healthyHostsPtr() const PURE;
+
+  /**
    * @return all degraded hosts contained in the set at the current time. NOTE: This set is
    *         eventually consistent. There is a time window where a host in this set may become
    *         undegraded and calling degraded() on it will return false. Code should be written to
@@ -286,9 +304,30 @@ public:
   virtual const HostVector& degradedHosts() const PURE;
 
   /**
+   * @return a shared ptr to the vector returned by degradedHosts().
+   */
+  virtual DegradedHostVectorConstSharedPtr degradedHostsPtr() const PURE;
+
+  /*
+   * @return all excluded hosts contained in the set at the current time. Excluded hosts should be
+   * ignored when computing load balancing weights, but may overlap with hosts in hosts().
+   */
+  virtual const HostVector& excludedHosts() const PURE;
+
+  /**
+   * @return a shared ptr to the vector returned by excludedHosts().
+   */
+  virtual ExcludedHostVectorConstSharedPtr excludedHostsPtr() const PURE;
+
+  /**
    * @return hosts per locality.
    */
   virtual const HostsPerLocality& hostsPerLocality() const PURE;
+
+  /**
+   * @return a shared ptr to the HostsPerLocality returned by hostsPerLocality().
+   */
+  virtual HostsPerLocalityConstSharedPtr hostsPerLocalityPtr() const PURE;
 
   /**
    * @return same as hostsPerLocality but only contains healthy hosts.
@@ -296,9 +335,29 @@ public:
   virtual const HostsPerLocality& healthyHostsPerLocality() const PURE;
 
   /**
+   * @return a shared ptr to the HostsPerLocality returned by healthyHostsPerLocality().
+   */
+  virtual HostsPerLocalityConstSharedPtr healthyHostsPerLocalityPtr() const PURE;
+
+  /**
    * @return same as hostsPerLocality but only contains degraded hosts.
    */
   virtual const HostsPerLocality& degradedHostsPerLocality() const PURE;
+
+  /**
+   * @return a shared ptr to the HostsPerLocality returned by degradedHostsPerLocality().
+   */
+  virtual HostsPerLocalityConstSharedPtr degradedHostsPerLocalityPtr() const PURE;
+
+  /**
+   * @return same as hostsPerLocality but only contains excluded hosts.
+   */
+  virtual const HostsPerLocality& excludedHostsPerLocality() const PURE;
+
+  /**
+   * @return a shared ptr to the HostsPerLocality returned by excludedHostsPerLocality().
+   */
+  virtual HostsPerLocalityConstSharedPtr excludedHostsPerLocalityPtr() const PURE;
 
   /**
    * @return weights for each locality in the host set.
@@ -328,7 +387,7 @@ public:
   virtual uint32_t overprovisioningFactor() const PURE;
 };
 
-typedef std::unique_ptr<HostSet> HostSetPtr;
+using HostSetPtr = std::unique_ptr<HostSet>;
 
 /**
  * This class contains all of the HostSets for a given cluster grouped by priority, for
@@ -336,14 +395,13 @@ typedef std::unique_ptr<HostSet> HostSetPtr;
  */
 class PrioritySet {
 public:
-  typedef std::function<void(const HostVector& hosts_added, const HostVector& hosts_removed)>
-      MemberUpdateCb;
+  using MemberUpdateCb =
+      std::function<void(const HostVector& hosts_added, const HostVector& hosts_removed)>;
 
-  typedef std::function<void(uint32_t priority, const HostVector& hosts_added,
-                             const HostVector& hosts_removed)>
-      PriorityUpdateCb;
+  using PriorityUpdateCb = std::function<void(uint32_t priority, const HostVector& hosts_added,
+                                              const HostVector& hosts_removed)>;
 
-  virtual ~PrioritySet() {}
+  virtual ~PrioritySet() = default;
 
   /**
    * Install a callback that will be invoked when any of the HostSets in the PrioritySet changes.
@@ -378,9 +436,11 @@ public:
     HostVectorConstSharedPtr hosts;
     HealthyHostVectorConstSharedPtr healthy_hosts;
     DegradedHostVectorConstSharedPtr degraded_hosts;
+    ExcludedHostVectorConstSharedPtr excluded_hosts;
     HostsPerLocalityConstSharedPtr hosts_per_locality;
     HostsPerLocalityConstSharedPtr healthy_hosts_per_locality;
     HostsPerLocalityConstSharedPtr degraded_hosts_per_locality;
+    HostsPerLocalityConstSharedPtr excluded_hosts_per_locality;
   };
 
   /**
@@ -403,7 +463,7 @@ public:
    */
   class HostUpdateCb {
   public:
-    virtual ~HostUpdateCb() {}
+    virtual ~HostUpdateCb() = default;
     /**
      * Updates the hosts in a given host set.
      *
@@ -425,7 +485,7 @@ public:
    */
   class BatchUpdateCb {
   public:
-    virtual ~BatchUpdateCb() {}
+    virtual ~BatchUpdateCb() = default;
 
     /**
      * Performs a batch host update. Implementors should use the provided callback to update hosts
@@ -447,116 +507,110 @@ public:
 /**
  * All cluster stats. @see stats_macros.h
  */
-// clang-format off
 #define ALL_CLUSTER_STATS(COUNTER, GAUGE, HISTOGRAM)                                               \
-  COUNTER  (lb_healthy_panic)                                                                      \
-  COUNTER  (lb_local_cluster_not_ok)                                                               \
-  COUNTER  (lb_recalculate_zone_structures)                                                        \
-  COUNTER  (lb_zone_cluster_too_small)                                                             \
-  COUNTER  (lb_zone_no_capacity_left)                                                              \
-  COUNTER  (lb_zone_number_differs)                                                                \
-  COUNTER  (lb_zone_routing_all_directly)                                                          \
-  COUNTER  (lb_zone_routing_sampled)                                                               \
-  COUNTER  (lb_zone_routing_cross_zone)                                                            \
-  GAUGE    (lb_subsets_active)                                                                     \
-  COUNTER  (lb_subsets_created)                                                                    \
-  COUNTER  (lb_subsets_removed)                                                                    \
-  COUNTER  (lb_subsets_selected)                                                                   \
-  COUNTER  (lb_subsets_fallback)                                                                   \
-  COUNTER  (lb_subsets_fallback_panic)                                                             \
-  COUNTER  (original_dst_host_invalid)                                                             \
-  COUNTER  (upstream_cx_total)                                                                     \
-  GAUGE    (upstream_cx_active)                                                                    \
-  COUNTER  (upstream_cx_http1_total)                                                               \
-  COUNTER  (upstream_cx_http2_total)                                                               \
-  COUNTER  (upstream_cx_connect_fail)                                                              \
-  COUNTER  (upstream_cx_connect_timeout)                                                           \
-  COUNTER  (upstream_cx_idle_timeout)                                                              \
-  COUNTER  (upstream_cx_connect_attempts_exceeded)                                                 \
-  COUNTER  (upstream_cx_overflow)                                                                  \
-  HISTOGRAM(upstream_cx_connect_ms)                                                                \
-  HISTOGRAM(upstream_cx_length_ms)                                                                 \
-  COUNTER  (upstream_cx_destroy)                                                                   \
-  COUNTER  (upstream_cx_destroy_local)                                                             \
-  COUNTER  (upstream_cx_destroy_remote)                                                            \
-  COUNTER  (upstream_cx_destroy_with_active_rq)                                                    \
-  COUNTER  (upstream_cx_destroy_local_with_active_rq)                                              \
-  COUNTER  (upstream_cx_destroy_remote_with_active_rq)                                             \
-  COUNTER  (upstream_cx_close_notify)                                                              \
-  COUNTER  (upstream_cx_rx_bytes_total)                                                            \
-  GAUGE    (upstream_cx_rx_bytes_buffered)                                                         \
-  COUNTER  (upstream_cx_tx_bytes_total)                                                            \
-  GAUGE    (upstream_cx_tx_bytes_buffered)                                                         \
-  COUNTER  (upstream_cx_protocol_error)                                                            \
-  COUNTER  (upstream_cx_max_requests)                                                              \
-  COUNTER  (upstream_cx_none_healthy)                                                              \
-  COUNTER  (upstream_cx_pool_overflow)                                                             \
-  COUNTER  (upstream_rq_total)                                                                     \
-  GAUGE    (upstream_rq_active)                                                                    \
-  COUNTER  (upstream_rq_completed)                                                                 \
-  COUNTER  (upstream_rq_pending_total)                                                             \
-  COUNTER  (upstream_rq_pending_overflow)                                                          \
-  COUNTER  (upstream_rq_pending_failure_eject)                                                     \
-  GAUGE    (upstream_rq_pending_active)                                                            \
-  COUNTER  (upstream_rq_cancelled)                                                                 \
-  COUNTER  (upstream_rq_maintenance_mode)                                                          \
-  COUNTER  (upstream_rq_timeout)                                                                   \
-  COUNTER  (upstream_rq_per_try_timeout)                                                           \
-  COUNTER  (upstream_rq_rx_reset)                                                                  \
-  COUNTER  (upstream_rq_tx_reset)                                                                  \
-  COUNTER  (upstream_rq_retry)                                                                     \
-  COUNTER  (upstream_rq_retry_success)                                                             \
-  COUNTER  (upstream_rq_retry_overflow)                                                            \
-  COUNTER  (upstream_flow_control_paused_reading_total)                                            \
-  COUNTER  (upstream_flow_control_resumed_reading_total)                                           \
-  COUNTER  (upstream_flow_control_backed_up_total)                                                 \
-  COUNTER  (upstream_flow_control_drained_total)                                                   \
-  COUNTER  (upstream_internal_redirect_failed_total)                                               \
-  COUNTER  (upstream_internal_redirect_succeeded_total)                                            \
-  COUNTER  (bind_errors)                                                                           \
-  GAUGE    (max_host_weight)                                                                       \
-  COUNTER  (membership_change)                                                                     \
-  GAUGE    (membership_healthy)                                                                    \
-  GAUGE    (membership_degraded)                                                                   \
-  GAUGE    (membership_total)                                                                      \
-  COUNTER  (retry_or_shadow_abandoned)                                                             \
-  COUNTER  (update_attempt)                                                                        \
-  COUNTER  (update_success)                                                                        \
-  COUNTER  (update_failure)                                                                        \
-  COUNTER  (update_empty)                                                                          \
-  COUNTER  (update_no_rebuild)                                                                     \
-  COUNTER  (assignment_timeout_received)                                                           \
-  COUNTER  (assignment_stale)                                                                      \
-  GAUGE    (version)
-// clang-format on
+  COUNTER(assignment_stale)                                                                        \
+  COUNTER(assignment_timeout_received)                                                             \
+  COUNTER(bind_errors)                                                                             \
+  COUNTER(lb_healthy_panic)                                                                        \
+  COUNTER(lb_local_cluster_not_ok)                                                                 \
+  COUNTER(lb_recalculate_zone_structures)                                                          \
+  COUNTER(lb_subsets_created)                                                                      \
+  COUNTER(lb_subsets_fallback)                                                                     \
+  COUNTER(lb_subsets_fallback_panic)                                                               \
+  COUNTER(lb_subsets_removed)                                                                      \
+  COUNTER(lb_subsets_selected)                                                                     \
+  COUNTER(lb_zone_cluster_too_small)                                                               \
+  COUNTER(lb_zone_no_capacity_left)                                                                \
+  COUNTER(lb_zone_number_differs)                                                                  \
+  COUNTER(lb_zone_routing_all_directly)                                                            \
+  COUNTER(lb_zone_routing_cross_zone)                                                              \
+  COUNTER(lb_zone_routing_sampled)                                                                 \
+  COUNTER(membership_change)                                                                       \
+  COUNTER(original_dst_host_invalid)                                                               \
+  COUNTER(retry_or_shadow_abandoned)                                                               \
+  COUNTER(update_attempt)                                                                          \
+  COUNTER(update_empty)                                                                            \
+  COUNTER(update_failure)                                                                          \
+  COUNTER(update_no_rebuild)                                                                       \
+  COUNTER(update_success)                                                                          \
+  COUNTER(upstream_cx_close_notify)                                                                \
+  COUNTER(upstream_cx_connect_attempts_exceeded)                                                   \
+  COUNTER(upstream_cx_connect_fail)                                                                \
+  COUNTER(upstream_cx_connect_timeout)                                                             \
+  COUNTER(upstream_cx_destroy)                                                                     \
+  COUNTER(upstream_cx_destroy_local)                                                               \
+  COUNTER(upstream_cx_destroy_local_with_active_rq)                                                \
+  COUNTER(upstream_cx_destroy_remote)                                                              \
+  COUNTER(upstream_cx_destroy_remote_with_active_rq)                                               \
+  COUNTER(upstream_cx_destroy_with_active_rq)                                                      \
+  COUNTER(upstream_cx_http1_total)                                                                 \
+  COUNTER(upstream_cx_http2_total)                                                                 \
+  COUNTER(upstream_cx_idle_timeout)                                                                \
+  COUNTER(upstream_cx_max_requests)                                                                \
+  COUNTER(upstream_cx_none_healthy)                                                                \
+  COUNTER(upstream_cx_overflow)                                                                    \
+  COUNTER(upstream_cx_pool_overflow)                                                               \
+  COUNTER(upstream_cx_protocol_error)                                                              \
+  COUNTER(upstream_cx_rx_bytes_total)                                                              \
+  COUNTER(upstream_cx_total)                                                                       \
+  COUNTER(upstream_cx_tx_bytes_total)                                                              \
+  COUNTER(upstream_flow_control_backed_up_total)                                                   \
+  COUNTER(upstream_flow_control_drained_total)                                                     \
+  COUNTER(upstream_flow_control_paused_reading_total)                                              \
+  COUNTER(upstream_flow_control_resumed_reading_total)                                             \
+  COUNTER(upstream_internal_redirect_failed_total)                                                 \
+  COUNTER(upstream_internal_redirect_succeeded_total)                                              \
+  COUNTER(upstream_rq_cancelled)                                                                   \
+  COUNTER(upstream_rq_completed)                                                                   \
+  COUNTER(upstream_rq_maintenance_mode)                                                            \
+  COUNTER(upstream_rq_pending_failure_eject)                                                       \
+  COUNTER(upstream_rq_pending_overflow)                                                            \
+  COUNTER(upstream_rq_pending_total)                                                               \
+  COUNTER(upstream_rq_per_try_timeout)                                                             \
+  COUNTER(upstream_rq_retry)                                                                       \
+  COUNTER(upstream_rq_retry_overflow)                                                              \
+  COUNTER(upstream_rq_retry_success)                                                               \
+  COUNTER(upstream_rq_rx_reset)                                                                    \
+  COUNTER(upstream_rq_timeout)                                                                     \
+  COUNTER(upstream_rq_total)                                                                       \
+  COUNTER(upstream_rq_tx_reset)                                                                    \
+  GAUGE(lb_subsets_active, Accumulate)                                                             \
+  GAUGE(max_host_weight, NeverImport)                                                              \
+  GAUGE(membership_degraded, NeverImport)                                                          \
+  GAUGE(membership_excluded, NeverImport)                                                          \
+  GAUGE(membership_healthy, NeverImport)                                                           \
+  GAUGE(membership_total, NeverImport)                                                             \
+  GAUGE(upstream_cx_active, Accumulate)                                                            \
+  GAUGE(upstream_cx_rx_bytes_buffered, Accumulate)                                                 \
+  GAUGE(upstream_cx_tx_bytes_buffered, Accumulate)                                                 \
+  GAUGE(upstream_rq_active, Accumulate)                                                            \
+  GAUGE(upstream_rq_pending_active, Accumulate)                                                    \
+  GAUGE(version, NeverImport)                                                                      \
+  HISTOGRAM(upstream_cx_connect_ms, Milliseconds)                                                  \
+  HISTOGRAM(upstream_cx_length_ms, Milliseconds)
 
 /**
  * All cluster load report stats. These are only use for EDS load reporting and not sent to the
  * stats sink. See envoy.api.v2.endpoint.ClusterStats for the definition of upstream_rq_dropped.
  * These are latched by LoadStatsReporter, independent of the normal stats sink flushing.
  */
-// clang-format off
-#define ALL_CLUSTER_LOAD_REPORT_STATS(COUNTER)                                                     \
-  COUNTER (upstream_rq_dropped)
-// clang-format on
+#define ALL_CLUSTER_LOAD_REPORT_STATS(COUNTER) COUNTER(upstream_rq_dropped)
 
 /**
  * Cluster circuit breakers stats. Open circuit breaker stats and remaining resource stats
  * can be handled differently by passing in different macros.
  */
-// clang-format off
 #define ALL_CLUSTER_CIRCUIT_BREAKERS_STATS(OPEN_GAUGE, REMAINING_GAUGE)                            \
-  OPEN_GAUGE      (cx_open)                                                                        \
-  OPEN_GAUGE      (rq_pending_open)                                                                \
-  OPEN_GAUGE      (rq_open)                                                                        \
-  OPEN_GAUGE      (rq_retry_open)                                                                  \
-  OPEN_GAUGE      (cx_pool_open)                                                                   \
-  REMAINING_GAUGE (remaining_cx)                                                                   \
-  REMAINING_GAUGE (remaining_pending)                                                              \
-  REMAINING_GAUGE (remaining_rq)                                                                   \
-  REMAINING_GAUGE (remaining_retries)                                                              \
-  REMAINING_GAUGE (remaining_cx_pools)
-// clang-format on
+  OPEN_GAUGE(cx_open, Accumulate)                                                                  \
+  OPEN_GAUGE(cx_pool_open, Accumulate)                                                             \
+  OPEN_GAUGE(rq_open, Accumulate)                                                                  \
+  OPEN_GAUGE(rq_pending_open, Accumulate)                                                          \
+  OPEN_GAUGE(rq_retry_open, Accumulate)                                                            \
+  REMAINING_GAUGE(remaining_cx, Accumulate)                                                        \
+  REMAINING_GAUGE(remaining_cx_pools, Accumulate)                                                  \
+  REMAINING_GAUGE(remaining_pending, Accumulate)                                                   \
+  REMAINING_GAUGE(remaining_retries, Accumulate)                                                   \
+  REMAINING_GAUGE(remaining_rq, Accumulate)
 
 /**
  * Struct definition for all cluster stats. @see stats_macros.h
@@ -586,9 +640,9 @@ struct ClusterCircuitBreakersStats {
  */
 class ProtocolOptionsConfig {
 public:
-  virtual ~ProtocolOptionsConfig() {}
+  virtual ~ProtocolOptionsConfig() = default;
 };
-typedef std::shared_ptr<const ProtocolOptionsConfig> ProtocolOptionsConfigConstSharedPtr;
+using ProtocolOptionsConfigConstSharedPtr = std::shared_ptr<const ProtocolOptionsConfig>;
 
 /**
  *  Base class for all cluster typed metadata factory.
@@ -610,7 +664,7 @@ public:
     static const uint64_t CLOSE_CONNECTIONS_ON_HOST_HEALTH_FAILURE = 0x4;
   };
 
-  virtual ~ClusterInfo() {}
+  virtual ~ClusterInfo() = default;
 
   /**
    * @return bool whether the cluster was added via API (if false the cluster was present in the
@@ -637,6 +691,12 @@ public:
    * @return uint64_t features supported by the cluster. @see Features.
    */
   virtual uint64_t features() const PURE;
+
+  /**
+   * @return const Http::Http1Settings& for HTTP/1.1 connections created on behalf of this cluster.
+   *         @see Http::Http1Settings.
+   */
+  virtual const Http::Http1Settings& http1Settings() const PURE;
 
   /**
    * @return const Http::Http2Settings& for HTTP/2 connections created on behalf of this cluster.
@@ -671,6 +731,12 @@ public:
    * @return the service discovery type to use for resolving the cluster.
    */
   virtual envoy::api::v2::Cluster::DiscoveryType type() const PURE;
+
+  /**
+   * @return the type of cluster, only used for custom discovery types.
+   */
+  virtual const absl::optional<envoy::api::v2::Cluster::CustomClusterType>&
+  clusterType() const PURE;
 
   /**
    * @return configuration for least request load balancing, only used if LB type is least request.
@@ -708,6 +774,12 @@ public:
   virtual uint64_t maxRequestsPerConnection() const PURE;
 
   /**
+   * @return uint32_t the maximum number of response headers. The default value is 100. Results in a
+   * reset if the number of headers exceeds this value.
+   */
+  virtual uint32_t maxResponseHeadersCount() const PURE;
+
+  /**
    * @return the human readable name of the cluster.
    */
   virtual const std::string& name() const PURE;
@@ -719,10 +791,10 @@ public:
   virtual ResourceManager& resourceManager(ResourcePriority priority) const PURE;
 
   /**
-   * @return Network::TransportSocketFactory& the factory of transport socket to use when
-   *         communicating with the cluster.
+   * @return TransportSocketMatcher& the transport socket matcher associated
+   * factory.
    */
-  virtual Network::TransportSocketFactory& transportSocketFactory() const PURE;
+  virtual TransportSocketMatcher& transportSocketMatcher() const PURE;
 
   /**
    * @return ClusterStats& strongly named stats for this cluster.
@@ -776,9 +848,26 @@ public:
   virtual bool drainConnectionsOnHostRemoval() const PURE;
 
   /**
+   * @return true if this cluster is configured to ignore hosts for the purpose of load balancing
+   * computations until they have been health checked for the first time.
+   */
+  virtual bool warmHosts() const PURE;
+
+  /**
    * @return eds cluster service_name of the cluster.
    */
   virtual absl::optional<std::string> eds_service_name() const PURE;
+
+  /**
+   * Create network filters on a new upstream connection.
+   */
+  virtual void createNetworkFilterChain(Network::Connection& connection) const PURE;
+
+  /**
+   * Calculate upstream protocol based on features.
+   */
+  virtual Http::Protocol
+  upstreamHttpProtocol(absl::optional<Http::Protocol> downstream_protocol) const PURE;
 
 protected:
   /**
@@ -792,7 +881,7 @@ protected:
   extensionProtocolOptions(const std::string& name) const PURE;
 };
 
-typedef std::shared_ptr<const ClusterInfo> ClusterInfoConstSharedPtr;
+using ClusterInfoConstSharedPtr = std::shared_ptr<const ClusterInfo>;
 
 class HealthChecker;
 
@@ -802,7 +891,7 @@ class HealthChecker;
  */
 class Cluster {
 public:
-  virtual ~Cluster() {}
+  virtual ~Cluster() = default;
 
   enum class InitializePhase { Primary, Secondary };
 
@@ -851,7 +940,7 @@ public:
   virtual const PrioritySet& prioritySet() const PURE;
 };
 
-typedef std::shared_ptr<Cluster> ClusterSharedPtr;
+using ClusterSharedPtr = std::shared_ptr<Cluster>;
 
 } // namespace Upstream
 } // namespace Envoy

@@ -17,6 +17,7 @@ envoy_cc_library(
     srcs = ["config.cc"],
     hdrs = ["config.h"],
     deps = [
+        "//include/envoy/config:config_provider_manager_interface",
         "//include/envoy/filesystem:filesystem_interface",
         "//include/envoy/http:filter_interface",
         "//include/envoy/registry",
@@ -36,7 +37,10 @@ envoy_cc_library(
         "//source/common/json:json_loader_lib",
         "//source/common/protobuf:utility_lib",
         "//source/common/router:rds_lib",
+        "//source/common/router:scoped_rds_lib",
+        "//source/common/runtime:runtime_lib",
         "//source/extensions/filters/network:well_known_names",
         "//source/extensions/filters/network/common:factory_base_lib",
+        "@envoy_api//envoy/config/filter/network/http_connection_manager/v2:pkg_cc_proto",
     ],
 )

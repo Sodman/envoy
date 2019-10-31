@@ -6,7 +6,6 @@
 #include "envoy/config/filter/network/rate_limit/v2/rate_limit.pb.validate.h"
 #include "envoy/registry/registry.h"
 
-#include "common/config/filter_json.h"
 #include "common/protobuf/utility.h"
 
 #include "extensions/filters/common/ratelimit/ratelimit_impl.h"
@@ -37,14 +36,6 @@ Network::FilterFactoryCb RateLimitConfigFactory::createFilterFactoryFromProtoTyp
         Filters::Common::RateLimit::rateLimitClient(
             context, proto_config.rate_limit_service().grpc_service(), timeout)));
   };
-}
-
-Network::FilterFactoryCb
-RateLimitConfigFactory::createFilterFactory(const Json::Object& json_config,
-                                            Server::Configuration::FactoryContext& context) {
-  envoy::config::filter::network::rate_limit::v2::RateLimit proto_config;
-  Envoy::Config::FilterJson::translateTcpRateLimitFilter(json_config, proto_config);
-  return createFilterFactoryFromProtoTyped(proto_config, context);
 }
 
 /**
