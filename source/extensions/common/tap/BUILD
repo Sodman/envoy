@@ -28,6 +28,11 @@ envoy_cc_library(
         ":tap_matcher",
         "//source/common/common:assert_lib",
         "//source/common/common:stack_array",
+        "//include/envoy/local_info:local_info_interface",
+        "//include/envoy/upstream:cluster_manager_interface",
+        "//include/envoy/grpc:async_client_interface",
+        "//source/common/grpc:typed_async_client_lib",
+        "//include/envoy/grpc:async_client_manager_interface",
     ],
 )
 
@@ -59,6 +64,7 @@ envoy_cc_library(
     srcs = ["extension_config_base.cc"],
     hdrs = ["extension_config_base.h"],
     deps = [
+        ":tds",
         "//include/envoy/thread_local:thread_local_interface",
         "//source/extensions/common/tap:admin",
         "@envoy_api//envoy/config/common/tap/v2alpha:pkg_cc_proto",
@@ -74,7 +80,7 @@ envoy_cc_library(
         "//source/extensions/common/tap:admin",
         "//source/common/init:target_lib",
         "//source/common/config:subscription_factory_lib",
-        "@envoy_api//envoy/config/common/tap/v2alpha:common_cc",
-        "@envoy_api//envoy/service/tap/v2alpha:tds_cc",
+        "@envoy_api//envoy/config/common/tap/v2alpha:pkg_cc_proto",
+        "@envoy_api//envoy/service/tap/v2alpha:pkg_cc_proto",
     ],
 )

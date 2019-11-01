@@ -8,6 +8,8 @@ option java_package = "io.envoyproxy.envoy.data.tap.v2alpha";
 
 import "envoy/data/tap/v2alpha/http.proto";
 import "envoy/data/tap/v2alpha/transport.proto";
+import "google/protobuf/struct.proto";
+import "envoy/api/v2/core/address.proto";
 
 import "validate/validate.proto";
 

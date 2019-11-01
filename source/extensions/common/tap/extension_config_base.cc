@@ -49,7 +49,8 @@ ExtensionConfigBase::ExtensionConfigBase(
       Upstream::ClusterManager& cluster_Manager,
       const LocalInfo::LocalInfo& local_info,
       Envoy::Runtime::RandomGenerator& random,
-      Api::Api& api
+      Api::Api& api,
+      ProtobufMessage::ValidationVisitor& validation_visitor
     )
     : proto_config_(proto_config), config_factory_(std::move(config_factory)),
       tls_slot_(tls.allocateSlot()) {
@@ -70,7 +71,7 @@ ExtensionConfigBase::ExtensionConfigBase(
     ENVOY_LOG(debug, "initializing tap extension with static config");
     break;
   }
-  case envoy::config::common::tap::v2alpha::CommonExtensionConfig::kTdsConfig: {
+  case envoy::config::common::tap::v2alpha::CommonExtensionConfig::kTapdsConfig: {
   tap_config_provider_manager_ =
       singleton_manager.getTyped<TapConfigProviderManager>(
           SINGLETON_MANAGER_REGISTERED_NAME(tap_config_provider_manager), [&admin, init_manager] {
@@ -82,7 +83,7 @@ ExtensionConfigBase::ExtensionConfigBase(
           });
 
           subscription_ = tap_config_provider_manager_->subscribeTap(
-            proto_config_.tds_config(),
+            proto_config_.tapds_config(),
             *this,
             stat_prefix,
             stats,
@@ -90,7 +91,8 @@ ExtensionConfigBase::ExtensionConfigBase(
             local_info,
             main_thread_dispatcher,
             random,
-            api
+            api,
+            validation_visitor
             );
             break;
   }

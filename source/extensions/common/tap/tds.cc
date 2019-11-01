@@ -1,7 +1,7 @@
 #include "extensions/common/tap/tds.h"
-#include "envoy/service/tap/v2alpha/tds.pb.validate.h"
+#include "envoy/service/tap/v2alpha/tapds.pb.validate.h"
 #include "common/config/utility.h"
-#include "common/config/subscription_factory.h"
+#include "common/config/subscription_factory_impl.h"
 
 namespace Envoy {
 namespace Extensions {
@@ -11,18 +11,20 @@ namespace Tap {
 TdsTapConfigSubscriptionHandle::~TdsTapConfigSubscriptionHandle(){}
 
 TdsTapConfigSubscriptionHandlePtr TapConfigProviderManagerImpl::subscribeTap(
-      const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TDSConfig& tds,
+      const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TapDSConfig& tds,
 
       /* Server::Configuration::FactoryContext& factory_context  be explicit here ... */
       Extensions::Common::Tap::ExtensionConfig& ptr,
 
       const std::string& stat_prefix,
       Stats::Scope& stats,
-      Upstream::ClusterManager& cluster_Manager,
+      Upstream::ClusterManager& cluster_manager,
       const LocalInfo::LocalInfo& local_info,
       Event::Dispatcher&  main_thread_dispatcher,
       Envoy::Runtime::RandomGenerator& random,
-      Api::Api& api
+      Api::Api& api,
+      ProtobufMessage::ValidationVisitor& validation_visitor
+
       ) {
   const uint64_t manager_identifier = MessageUtil::hash(tds);
 
@@ -40,11 +42,13 @@ TdsTapConfigSubscriptionSharedPtr subscription;
 
 stat_prefix,
 stats,
-cluster_Manager,
+cluster_manager,
 local_info,
 main_thread_dispatcher,
 random,
-api
+api,
+validation_visitor
+
     ));
     
 
@@ -76,35 +80,33 @@ TdsTapConfigSubscriptionHandleImpl::~TdsTapConfigSubscriptionHandleImpl() {
 ///////////////////////////
 TdsTapConfigSubscription::TdsTapConfigSubscription(
 
-      const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TDSConfig& tds,
+      const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TapDSConfig& tds,
       const uint64_t manager_identifier,
       TapConfigProviderManagerImpl& tap_config_provider_manager,
 
       const std::string& stat_prefix,
       Stats::Scope& stats,
-      Upstream::ClusterManager& cluster_Manager,
+      Upstream::ClusterManager& cluster_manager,
       const LocalInfo::LocalInfo& local_info,
-      Event::Dispatcher&  main_thread_dispatcher,
-      Envoy::Runtime::RandomGenerator& random,
-      Api::Api& api
+      Event::Dispatcher&  ,
+      Envoy::Runtime::RandomGenerator& ,
+      Api::Api& api,
+      ProtobufMessage::ValidationVisitor& validation_visitor
 )
 : tap_config_name_(tds.name()),
       init_target_(fmt::format("TdsTapConfigSubscription {}", tap_config_name_),
-                   [this]() { subscription_->start({tap_config_name_}, *this); }),
+                   [this]() { subscription_->start({tap_config_name_}); }),
       scope_(stats.createScope(stat_prefix + "tds." + tap_config_name_ + ".")),
       stats_({ALL_TDS_STATS(POOL_COUNTER(*scope_))}),
       tap_config_provider_manager_(tap_config_provider_manager),
       manager_identifier_(manager_identifier) ,
-      last_updated_(api.timeSource().systemTime() ), api_(api) {
-  Envoy::Config::Utility::checkLocalInfo("tds", local_info);
+      last_updated_(api.timeSource().systemTime() ), api_(api), validation_visitor_(validation_visitor) {
 
-  subscription_ = Envoy::Config::SubscriptionFactory::subscriptionFromConfigSource(
-      tds.config_source(), local_info, main_thread_dispatcher,
-      cluster_Manager, random, *scope_,
-      "envoy.service.tap.v2alpha.TapDiscoveryService.FetchTapConfigs",
-      "envoy.service.tap.v2alpha.TapDiscoveryService.StreamTapConfigs",
-      Grpc::Common::typeUrl(envoy::service::tap::v2alpha::TapConfiguration().GetDescriptor()->full_name()),
-      api);
+  Envoy::Config::Utility::checkLocalInfo("tds", local_info);
+  subscription_ = cluster_manager.subscriptionFactory().subscriptionFromConfigSource(
+          tds.config_source(),
+          Grpc::Common::typeUrl(envoy::service::tap::v2alpha::TapResource().GetDescriptor()->full_name()),
+          *scope_, *this);
 }
 
 
@@ -114,10 +116,10 @@ TdsTapConfigSubscription::~TdsTapConfigSubscription() {
 
   tap_config_provider_manager_.tap_config_subscriptions_.erase(manager_identifier_);
 }
+// TODO: a bit hacky
+void TdsTapConfigSubscription::onConfigUpdate(const Protobuf::RepeatedPtrField<ProtobufWkt::Any>& resources,
+                    const std::string& version_info) {
 
-void TdsTapConfigSubscription::onConfigUpdate(
-    const Protobuf::RepeatedPtrField<ProtobufWkt::Any>& resources,
-    const std::string& version_info) {
   last_updated_ = api_.timeSource().systemTime();
 
   if (resources.empty()) {
@@ -131,12 +133,11 @@ void TdsTapConfigSubscription::onConfigUpdate(
     return;
   }
 
-
   if (resources.size() != 1) {
     throw EnvoyException(fmt::format("Unexpected TDS resource length: {}", resources.size()));
   }
-  auto tap_config = MessageUtil::anyConvert<envoy::service::tap::v2alpha::TapConfiguration>(resources[0]);
-  MessageUtil::validate(tap_config);
+  auto tap_config = MessageUtil::anyConvert<envoy::service::tap::v2alpha::TapResource>(resources[0]);
+  MessageUtil::validate(tap_config, validation_visitor_);
 
   if (!(tap_config.name() == tap_config_name_)) {
     throw EnvoyException(fmt::format("Unexpected TDS configuration (expecting {}): {}",
@@ -159,7 +160,20 @@ void TdsTapConfigSubscription::onConfigUpdate(
   init_target_.ready();
 }
 
-void TdsTapConfigSubscription::onConfigUpdateFailed(const EnvoyException*) {
+void TdsTapConfigSubscription::onConfigUpdate(const Protobuf::RepeatedPtrField<envoy::api::v2::Resource>& added_resources,
+                      const Protobuf::RepeatedPtrField<std::string>& /*removed_resources*/,
+                      const std::string& system_version_info) {
+
+
+  Protobuf::RepeatedPtrField<ProtobufWkt::Any> resources;
+  for (auto&& resource : added_resources) {
+    *resources.Add() = resource.resource();
+  }
+  onConfigUpdate(resources, system_version_info);
+}
+
+void TdsTapConfigSubscription::onConfigUpdateFailed(Envoy::Config::ConfigUpdateFailureReason,
+                            const EnvoyException*) {
   // We need to allow server startup to continue, even if we have a bad
   // config.
   init_target_.ready();

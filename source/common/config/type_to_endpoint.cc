@@ -6,6 +6,7 @@
 #include "envoy/api/v2/rds.pb.h"
 #include "envoy/api/v2/srds.pb.h"
 #include "envoy/service/discovery/v2/rtds.pb.h"
+#include "envoy/service/tap/v2alpha/tapds.pb.h"
 
 #include "common/grpc/common.h"
 
@@ -16,6 +17,8 @@ const char UnknownMethod[] = "could_not_lookup_method_due_to_unknown_type_url";
 
 #define API_TYPE_URL_IS(x)                                                                         \
   (type_url == Grpc::Common::typeUrl(envoy::api::v2::x().GetDescriptor()->full_name()))
+#define SERVICE_TYPE_URL_IS(x)                                                                         \
+  (type_url == Grpc::Common::typeUrl(envoy::service::x().GetDescriptor()->full_name()))
 #define DISCOVERY_TYPE_URL_IS(x)                                                                   \
   (type_url ==                                                                                     \
    Grpc::Common::typeUrl(envoy::service::discovery::v2::x().GetDescriptor()->full_name()))
@@ -58,6 +61,8 @@ const Protobuf::MethodDescriptor& sotwGrpcMethod(absl::string_view type_url) {
     method_name = "envoy.api.v2.ListenerDiscoveryService.StreamListeners";
   } else if (DISCOVERY_TYPE_URL_IS(Runtime)) {
     method_name = "envoy.service.discovery.v2.RuntimeDiscoveryService.StreamRuntime";
+  } else if (SERVICE_TYPE_URL_IS(tap::v2alpha::TapResource)) {
+    method_name = "envoy.service.tap.v2alpha.TapDiscoveryService.StreamTapConfigs";
   }
   ASSERT(method_name != UnknownMethod);
   return *Protobuf::DescriptorPool::generated_pool()->FindMethodByName(method_name);
@@ -79,6 +84,8 @@ const Protobuf::MethodDescriptor& restMethod(absl::string_view type_url) {
     method_name = "envoy.api.v2.ListenerDiscoveryService.FetchListeners";
   } else if (DISCOVERY_TYPE_URL_IS(Runtime)) {
     method_name = "envoy.service.discovery.v2.RuntimeDiscoveryService.FetchRuntime";
+  } else if (SERVICE_TYPE_URL_IS(tap::v2alpha::TapResource)) {
+    method_name = "envoy.service.tap.v2alpha.TapDiscoveryService.FetchTapConfigs";
   }
   ASSERT(method_name != UnknownMethod);
   return *Protobuf::DescriptorPool::generated_pool()->FindMethodByName(method_name);

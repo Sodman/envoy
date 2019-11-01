@@ -83,8 +83,8 @@ TapConfigBaseImpl::TapConfigBaseImpl(envoy::service::tap::v2alpha::TapConfig&& p
   }
 
   buildMatcher(proto_config.match_config(), matchers_);
-  if (proto_config.has_filter_enabled()) {
-    filter_enabled_ = proto_config.filter_enabled();
+  if (proto_config.has_tap_enabled()) {
+    filter_enabled_ = proto_config.tap_enabled();
   }
 }
 
@@ -225,9 +225,7 @@ void GrpcTapSink::GrpcPerTapSinkHandle::submitTrace(
 
   if (parent_.stream_ == nullptr) {
     parent_.stream_ =
-        parent_.client_->start(*Protobuf::DescriptorPool::generated_pool()->FindMethodByName(
-                                   "envoy.service.tap.v2alpha.TapService.StreamTaps"),
-                               parent_);
+        parent_.client_->start(parent_.service_method_, parent_, Http::AsyncClient::StreamOptions());
     auto* identifier = message.mutable_identifier();
     *identifier->mutable_node() = parent_.local_info_.node();
     identifier->set_tap_id(parent_.tap_id_);

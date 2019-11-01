@@ -66,7 +66,8 @@ TapSocketFactory::TapSocketFactory(
                           context.clusterManager(),
                           context.localInfo(),
                           context.random(),
-                          context.api()),
+                          context.api(),
+                          context.messageValidationVisitor()),
       transport_socket_factory_(std::move(transport_socket_factory)) {}
 
 Network::TransportSocketPtr

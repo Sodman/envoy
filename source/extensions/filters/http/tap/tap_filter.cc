@@ -21,7 +21,8 @@ FilterConfigImpl::FilterConfigImpl(
                           context.clusterManager(),
                           context.localInfo(),
                           context.random(),
-                          context.api()
+                          context.api(),
+                          context.messageValidationVisitor()
                           ),
       stats_(Filter::generateStats(stats_prefix, context.scope())) {}
 

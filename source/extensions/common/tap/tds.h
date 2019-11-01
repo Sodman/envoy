@@ -7,7 +7,7 @@
 #include <unordered_set>
 
 // #include "envoy/admin/v2alpha/config_dump.pb.h"
-#include "envoy/service/tap/v2alpha/tds.pb.validate.h"
+#include "envoy/service/tap/v2alpha/tapds.pb.validate.h"
 
 #include "envoy/service/tap/v2alpha/common.pb.h"
 #include "envoy/config/common/tap/v2alpha/common.pb.h"
@@ -67,7 +67,7 @@ public:
 
   // RouteConfigProviderManager
   virtual TdsTapConfigSubscriptionHandlePtr subscribeTap(
-      const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TDSConfig& tds,
+      const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TapDSConfig& tds,
       ExtensionConfig& ptr,
 
       const std::string& stat_prefix,
@@ -76,7 +76,8 @@ public:
       const LocalInfo::LocalInfo& local_info,
       Event::Dispatcher&  main_thread_dispatcher,
       Envoy::Runtime::RandomGenerator& random,
-      Api::Api& api
+      Api::Api& api,
+      ProtobufMessage::ValidationVisitor& validation_visitor
 
       ) PURE;
 
@@ -95,17 +96,15 @@ public:
   ~TdsTapConfigSubscription() override;
 
   // Config::SubscriptionCallbacks
-  void onConfigUpdate(const Protobuf::RepeatedPtrField<ProtobufWkt::Any>& resources,
-                      const std::string& version_info) override;
+  void onConfigUpdate(const Protobuf::RepeatedPtrField<ProtobufWkt::Any>&,
+                      const std::string&) override;
   void onConfigUpdate(const Protobuf::RepeatedPtrField<envoy::api::v2::Resource>&,
-                      const Protobuf::RepeatedPtrField<std::string>&, const std::string&) override {
-    NOT_IMPLEMENTED_GCOVR_EXCL_LINE;
-  }
-  void onConfigUpdateFailed(const EnvoyException* e) override;
+                      const Protobuf::RepeatedPtrField<std::string>&, const std::string&) override;
+  void onConfigUpdateFailed(Envoy::Config::ConfigUpdateFailureReason reason,
+                            const EnvoyException* e) override;
   std::string resourceName(const ProtobufWkt::Any& resource) override {
-    return MessageUtil::anyConvert<envoy::service::tap::v2alpha::TapConfiguration>(resource).name();
+    return MessageUtil::anyConvert<envoy::service::tap::v2alpha::TapResource>(resource).name();
   }
-
 private:
   struct LastConfigInfo {
     uint64_t last_config_hash_;
@@ -124,7 +123,7 @@ private:
       }
 
   TdsTapConfigSubscription(
-      const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TDSConfig& tds,
+      const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TapDSConfig& tds,
       const uint64_t manager_identifier,
       TapConfigProviderManagerImpl& tap_config_provider_manager,
 
@@ -136,7 +135,8 @@ private:
       const LocalInfo::LocalInfo& local_info,
       Event::Dispatcher&  main_thread_dispatcher,
       Envoy::Runtime::RandomGenerator& random,
-      Api::Api& api
+      Api::Api& api,
+      ProtobufMessage::ValidationVisitor& validation_visitor
       );
 
   std::unique_ptr<Envoy::Config::Subscription> subscription_;
@@ -151,6 +151,7 @@ private:
   envoy::service::tap::v2alpha::TapConfig tap_config_proto_;
   std::unordered_set<ExtensionConfig*> tap_extension_configs_;
   Api::Api& api_;
+  ProtobufMessage::ValidationVisitor& validation_visitor_;
 
   friend class TapConfigProviderManagerImpl;
   friend class TdsTapConfigSubscriptionHandleImpl;
@@ -187,7 +188,7 @@ public:
 
   // RouteConfigProviderManager
   TdsTapConfigSubscriptionHandlePtr subscribeTap(
-      const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TDSConfig& tds,
+      const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TapDSConfig& tds,
     
       /* Server::Configuration::FactoryContext& factory_context  be explicit here ... */
       // const std::string& stat_prefix
@@ -200,9 +201,8 @@ public:
       const LocalInfo::LocalInfo& local_info,
       Event::Dispatcher&  main_thread_dispatcher,
       Envoy::Runtime::RandomGenerator& random,
-      Api::Api& api
-
-
+      Api::Api& api,
+      ProtobufMessage::ValidationVisitor& validation_visitor
       ) override;
 
 private:

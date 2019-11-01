@@ -37,7 +37,8 @@ protected:
       Upstream::ClusterManager& cluster_Manager,
       const LocalInfo::LocalInfo& local_info,
       Envoy::Runtime::RandomGenerator& random,
-      Api::Api& api
+      Api::Api& api,
+      ProtobufMessage::ValidationVisitor& validation_visitor
                       
                       );
   ~ExtensionConfigBase() override;

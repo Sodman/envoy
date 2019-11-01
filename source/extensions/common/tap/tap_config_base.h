@@ -12,6 +12,7 @@
 
 #include "extensions/common/tap/tap.h"
 #include "extensions/common/tap/tap_matcher.h"
+#include "common/grpc/typed_async_client.h"
 
 namespace Envoy {
 namespace Extensions {
@@ -155,6 +156,9 @@ private:
 
   const envoy::service::tap::v2alpha::FilePerTapSink config_;
 };
+
+using GrpcTapSinkAsyncCallbacks = Grpc::AsyncStreamCallbacks<envoy::service::tap::v2alpha::StreamTapsResponse>;
+
 /**
  * A tap sink that writes each tap trace to a discrete output file.
  *
@@ -165,13 +169,15 @@ and failure
  */
 class GrpcTapSink
     : public Sink,
-      public Grpc::TypedAsyncStreamCallbacks<envoy::service::tap::v2alpha::StreamTapsResponse> {
+      public GrpcTapSinkAsyncCallbacks {
 public:
   GrpcTapSink(const envoy::api::v2::core::GrpcService& grpc_service,
               std::string tap_id,
               Upstream::ClusterManager& cluster_manager, Stats::Scope& scope,
               const LocalInfo::LocalInfo& local_info)
-      : local_info_(local_info), tap_id_(std::move(tap_id)) {
+      : local_info_(local_info), tap_id_(std::move(tap_id)), 
+  service_method_(*Protobuf::DescriptorPool::generated_pool()->FindMethodByName(
+          "envoy.service.tap.v2alpha.TapService.StreamTaps")) {
     const auto async_client_factory =
         cluster_manager.grpcAsyncClientManager().factoryForGrpcService(grpc_service, scope, true);
     client_ = async_client_factory->create();
@@ -190,13 +196,14 @@ public:
     return std::make_unique<GrpcPerTapSinkHandle>(*this, trace_id);
   }
 
-  // Grpc::TypedAsyncStreamCallbacks
+  // Grpc::AsyncStreamCallbacks
+
   void onCreateInitialMetadata(Http::HeaderMap&) override {}
   void onReceiveInitialMetadata(Http::HeaderMapPtr&&) override {}
-  void
-  onReceiveMessage(std::unique_ptr<envoy::service::tap::v2alpha::StreamTapsResponse>&&) override {}
+  void onReceiveMessage(std::unique_ptr<envoy::service::tap::v2alpha::StreamTapsResponse>&&) override {}
   void onReceiveTrailingMetadata(Http::HeaderMapPtr&&) override {}
-  void onRemoteClose(Grpc::Status::GrpcStatus, const std::string&) override { stream_ = nullptr; };
+
+  void onRemoteClose(Grpc::Status::GrpcStatus , const std::string&) override  { stream_ = nullptr; };
 
 private:
   struct GrpcPerTapSinkHandle : public PerTapSinkHandle {
@@ -213,8 +220,14 @@ private:
   };
   const LocalInfo::LocalInfo& local_info_;
   std::string tap_id_;
-  Grpc::AsyncClientPtr client_;
-  Grpc::AsyncStream* stream_{};
+
+// service_method_, *this, Http::AsyncClient::StreamOptions());
+  const Protobuf::MethodDescriptor& service_method_;
+  Grpc::AsyncClient<envoy::service::tap::v2alpha::StreamTapsRequest,
+                    envoy::service::tap::v2alpha::StreamTapsResponse>
+      client_;
+  Grpc::AsyncStream<envoy::service::tap::v2alpha::StreamTapsRequest>
+      stream_{};
 };
 
 } // namespace Tap

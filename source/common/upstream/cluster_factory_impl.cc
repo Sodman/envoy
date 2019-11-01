@@ -96,7 +96,7 @@ ClusterFactoryImplBase::create(const envoy::api::v2::Cluster& cluster,
   auto stats_scope = generateStatsScope(cluster, context.stats());
   Server::Configuration::TransportSocketFactoryContextImpl factory_context(
       context.admin(), context.sslContextManager(), *stats_scope, context.clusterManager(),
-      context.localInfo(), context.dispatcher(), context.random(), context.stats(),
+      context.localInfo(), context.dispatcher(), context.random(), context.runtime(), context.stats(),
       context.singletonManager(), context.tls(), context.messageValidationVisitor(), context.api());
 
   std::pair<ClusterImplBaseSharedPtr, ThreadAwareLoadBalancerPtr> new_cluster_pair =

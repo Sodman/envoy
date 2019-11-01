@@ -30,6 +30,8 @@ envoy_cc_library(
         ":tap_config_interface",
         "//source/extensions/common/tap:tap_config_base",
         "@envoy_api//envoy/data/tap/v2alpha:pkg_cc_proto",
+        "//source/common/network:utility_lib",
+        "//source/extensions/filters/http:well_known_names",
     ],
 )
 

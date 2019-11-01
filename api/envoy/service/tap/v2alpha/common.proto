@@ -207,11 +207,3 @@ message StreamingGrpcSink {
   // The gRPC server that hosts the Tap Sink Service.
   api.v2.core.GrpcService grpc_service = 2 [(validate.rules).message = {required: true}];
 }
-
-message StreamingGrpcSink {
-  // GrpcService to send data to. format argument must be PROTO_BINARY grpc_service output stream.
-  envoy.api.v2.core.GrpcService grpc_service = 1 [(validate.rules).message.required = true];
-
-  // Opaque identifier, that will be sent back to the streaming grpc server.
-  string tap_id = 2;
-}
