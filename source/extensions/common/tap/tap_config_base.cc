@@ -40,11 +40,11 @@ bool Utility::addBufferToProtoBytes(envoy::data::tap::v2alpha::Body& output_body
 }
 
 TapConfigBaseImpl::TapConfigBaseImpl(envoy::service::tap::v2alpha::TapConfig&& proto_config,
-                                     Runtime::Loader& loader,
-                                     Common::Tap::Sink* admin_streamer,
+                                     Runtime::Loader& loader, Common::Tap::Sink* admin_streamer,
                                      Upstream::ClusterManager& cluster_manager, Stats::Scope& scope,
                                      const LocalInfo::LocalInfo& local_info)
-    : loader_(loader), max_buffered_rx_bytes_(PROTOBUF_GET_WRAPPED_OR_DEFAULT(
+    : loader_(loader),
+      max_buffered_rx_bytes_(PROTOBUF_GET_WRAPPED_OR_DEFAULT(
           proto_config.output_config(), max_buffered_rx_bytes, DefaultMaxBufferedBytes)),
       max_buffered_tx_bytes_(PROTOBUF_GET_WRAPPED_OR_DEFAULT(
           proto_config.output_config(), max_buffered_tx_bytes, DefaultMaxBufferedBytes)),
@@ -89,12 +89,12 @@ TapConfigBaseImpl::TapConfigBaseImpl(envoy::service::tap::v2alpha::TapConfig&& p
 }
 
 bool TapConfigBaseImpl::enabled(uint64_t random_value) const {
-    if (filter_enabled_) {
-      const auto& filter_enabled = filter_enabled_.value();
-      return loader_.snapshot().featureEnabled(filter_enabled.runtime_key(),
-                                               filter_enabled.default_value(), random_value);
-    }
-    return true;
+  if (filter_enabled_) {
+    const auto& filter_enabled = filter_enabled_.value();
+    return loader_.snapshot().featureEnabled(filter_enabled.runtime_key(),
+                                             filter_enabled.default_value(), random_value);
+  }
+  return true;
 }
 
 const Matcher& TapConfigBaseImpl::rootMatcher() const {
@@ -224,8 +224,8 @@ void GrpcTapSink::GrpcPerTapSinkHandle::submitTrace(
   envoy::service::tap::v2alpha::StreamTapsRequest message;
 
   if (parent_.stream_ == nullptr) {
-    parent_.stream_ =
-        parent_.client_->start(parent_.service_method_, parent_, Http::AsyncClient::StreamOptions());
+    parent_.stream_ = parent_.client_->start(parent_.service_method_, parent_,
+                                             Http::AsyncClient::StreamOptions());
     auto* identifier = message.mutable_identifier();
     *identifier->mutable_node() = parent_.local_info_.node();
     identifier->set_tap_id(parent_.tap_id_);

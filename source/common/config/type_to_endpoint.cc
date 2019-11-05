@@ -17,7 +17,7 @@ const char UnknownMethod[] = "could_not_lookup_method_due_to_unknown_type_url";
 
 #define API_TYPE_URL_IS(x)                                                                         \
   (type_url == Grpc::Common::typeUrl(envoy::api::v2::x().GetDescriptor()->full_name()))
-#define SERVICE_TYPE_URL_IS(x)                                                                         \
+#define SERVICE_TYPE_URL_IS(x)                                                                     \
   (type_url == Grpc::Common::typeUrl(envoy::service::x().GetDescriptor()->full_name()))
 #define DISCOVERY_TYPE_URL_IS(x)                                                                   \
   (type_url ==                                                                                     \

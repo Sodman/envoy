@@ -31,7 +31,6 @@ namespace Extensions {
 namespace Common {
 namespace Tap {
 
-
 /**
  * All RDS stats. @see stats_macros.h
  */
@@ -49,38 +48,32 @@ struct TdsStats {
   ALL_TDS_STATS(GENERATE_COUNTER_STRUCT)
 };
 
-class TdsTapConfigSubscriptionHandle{
+class TdsTapConfigSubscriptionHandle {
 public:
   // handle can only be moved.
   TdsTapConfigSubscriptionHandle(const TdsTapConfigSubscriptionHandle&) = delete;
-  TdsTapConfigSubscriptionHandle(){}
+  TdsTapConfigSubscriptionHandle() {}
   // PURE DTor to make this class abstract.
   virtual ~TdsTapConfigSubscriptionHandle() PURE;
-
 };
 
 typedef std::unique_ptr<TdsTapConfigSubscriptionHandle> TdsTapConfigSubscriptionHandlePtr;
 
 class TapConfigProviderManager {
 public:
-  virtual ~TapConfigProviderManager(){}
+  virtual ~TapConfigProviderManager() {}
 
   // RouteConfigProviderManager
-  virtual TdsTapConfigSubscriptionHandlePtr subscribeTap(
-      const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TapDSConfig& tds,
-      ExtensionConfig& ptr,
+  virtual TdsTapConfigSubscriptionHandlePtr
+  subscribeTap(const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TapDSConfig& tds,
+               ExtensionConfig& ptr,
 
-      const std::string& stat_prefix,
-      Stats::Scope& stats,
-      Upstream::ClusterManager& cluster_Manager,
-      const LocalInfo::LocalInfo& local_info,
-      Event::Dispatcher&  main_thread_dispatcher,
-      Envoy::Runtime::RandomGenerator& random,
-      Api::Api& api,
-      ProtobufMessage::ValidationVisitor& validation_visitor
+               const std::string& stat_prefix, Stats::Scope& stats,
+               Upstream::ClusterManager& cluster_Manager, const LocalInfo::LocalInfo& local_info,
+               Event::Dispatcher& main_thread_dispatcher, Envoy::Runtime::RandomGenerator& random,
+               Api::Api& api, ProtobufMessage::ValidationVisitor& validation_visitor
 
-      ) PURE;
-
+               ) PURE;
 };
 
 ////////////////////////// impl
@@ -91,7 +84,7 @@ class TapConfigProviderManagerImpl;
  * RDS config providers.
  */
 class TdsTapConfigSubscription : public Envoy::Config::SubscriptionCallbacks,
-                                   Logger::Loggable<Logger::Id::router> {
+                                 Logger::Loggable<Logger::Id::router> {
 public:
   ~TdsTapConfigSubscription() override;
 
@@ -105,39 +98,24 @@ public:
   std::string resourceName(const ProtobufWkt::Any& resource) override {
     return MessageUtil::anyConvert<envoy::service::tap::v2alpha::TapResource>(resource).name();
   }
+
 private:
   struct LastConfigInfo {
     uint64_t last_config_hash_;
     std::string last_config_version_;
   };
 
-  void remove(
-      ExtensionConfig& cfg
-      ) {
-        tap_extension_configs_.erase(&cfg);
-      }
-  void add(
-      ExtensionConfig& cfg
-      ) {
-        tap_extension_configs_.insert(&cfg);
-      }
+  void remove(ExtensionConfig& cfg) { tap_extension_configs_.erase(&cfg); }
+  void add(ExtensionConfig& cfg) { tap_extension_configs_.insert(&cfg); }
 
   TdsTapConfigSubscription(
       const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TapDSConfig& tds,
-      const uint64_t manager_identifier,
-      TapConfigProviderManagerImpl& tap_config_provider_manager,
+      const uint64_t manager_identifier, TapConfigProviderManagerImpl& tap_config_provider_manager,
 
-
-
-      const std::string& stat_prefix,
-      Stats::Scope& stats,
-      Upstream::ClusterManager& cluster_Manager,
-      const LocalInfo::LocalInfo& local_info,
-      Event::Dispatcher&  main_thread_dispatcher,
-      Envoy::Runtime::RandomGenerator& random,
-      Api::Api& api,
-      ProtobufMessage::ValidationVisitor& validation_visitor
-      );
+      const std::string& stat_prefix, Stats::Scope& stats,
+      Upstream::ClusterManager& cluster_Manager, const LocalInfo::LocalInfo& local_info,
+      Event::Dispatcher& main_thread_dispatcher, Envoy::Runtime::RandomGenerator& random,
+      Api::Api& api, ProtobufMessage::ValidationVisitor& validation_visitor);
 
   std::unique_ptr<Envoy::Config::Subscription> subscription_;
   const std::string tap_config_name_;
@@ -159,68 +137,55 @@ private:
 
 typedef std::shared_ptr<TdsTapConfigSubscription> TdsTapConfigSubscriptionSharedPtr;
 
-
 class TdsTapConfigSubscriptionHandleImpl : public TdsTapConfigSubscriptionHandle {
 public:
-TdsTapConfigSubscriptionHandleImpl(const TdsTapConfigSubscriptionHandleImpl&) = delete;
-TdsTapConfigSubscriptionHandleImpl(TdsTapConfigSubscriptionSharedPtr sub,
-  ExtensionConfig& config);
+  TdsTapConfigSubscriptionHandleImpl(const TdsTapConfigSubscriptionHandleImpl&) = delete;
+  TdsTapConfigSubscriptionHandleImpl(TdsTapConfigSubscriptionSharedPtr sub,
+                                     ExtensionConfig& config);
   ~TdsTapConfigSubscriptionHandleImpl() override;
+
 private:
   TdsTapConfigSubscriptionSharedPtr sub_;
   ExtensionConfig& config_;
 };
 
-
-class TapConfigProviderManagerImpl : public TapConfigProviderManager,
-                                       public Singleton::Instance {
+class TapConfigProviderManagerImpl : public TapConfigProviderManager, public Singleton::Instance {
 public:
-      
-  TapConfigProviderManagerImpl(Server::Admin& admin, Init::Manager* init_manager = nullptr): admin_(admin), init_manager_(init_manager) {
+  TapConfigProviderManagerImpl(Server::Admin& admin, Init::Manager* init_manager = nullptr)
+      : admin_(admin), init_manager_(init_manager) {
     // keep admin as we'll use it for admin endpoint.
     static_cast<void>(admin_);
   }
-  ~TapConfigProviderManagerImpl(){
-    static_cast<void>(1);
-  }
+  ~TapConfigProviderManagerImpl() { static_cast<void>(1); }
 
   // std::unique_ptr<envoy::admin::v2alpha::RoutesConfigDump> dumpRouteConfigs() const;
 
   // RouteConfigProviderManager
-  TdsTapConfigSubscriptionHandlePtr subscribeTap(
-      const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TapDSConfig& tds,
-    
-      /* Server::Configuration::FactoryContext& factory_context  be explicit here ... */
-      // const std::string& stat_prefix
-      Extensions::Common::Tap::ExtensionConfig& ptr,
+  TdsTapConfigSubscriptionHandlePtr
+  subscribeTap(const envoy::config::common::tap::v2alpha::CommonExtensionConfig_TapDSConfig& tds,
 
+               /* Server::Configuration::FactoryContext& factory_context  be explicit here ... */
+               // const std::string& stat_prefix
+               Extensions::Common::Tap::ExtensionConfig& ptr,
 
-      const std::string& stat_prefix,
-      Stats::Scope& stats,
-      Upstream::ClusterManager& cluster_Manager,
-      const LocalInfo::LocalInfo& local_info,
-      Event::Dispatcher&  main_thread_dispatcher,
-      Envoy::Runtime::RandomGenerator& random,
-      Api::Api& api,
-      ProtobufMessage::ValidationVisitor& validation_visitor
-      ) override;
+               const std::string& stat_prefix, Stats::Scope& stats,
+               Upstream::ClusterManager& cluster_Manager, const LocalInfo::LocalInfo& local_info,
+               Event::Dispatcher& main_thread_dispatcher, Envoy::Runtime::RandomGenerator& random,
+               Api::Api& api, ProtobufMessage::ValidationVisitor& validation_visitor) override;
 
 private:
-
   // TODO(jsedgwick) These two members are prime candidates for the owned-entry list/map
   // as in ConfigTracker. I.e. the ProviderImpls would have an EntryOwner for these lists
   // Then the lifetime management stuff is centralized and opaque.
-  std::unordered_map<uint64_t, std::weak_ptr<TdsTapConfigSubscription>>
-      tap_config_subscriptions_;
+  std::unordered_map<uint64_t, std::weak_ptr<TdsTapConfigSubscription>> tap_config_subscriptions_;
   Server::ConfigTracker::EntryOwnerPtr config_tracker_entry_;
   Server::Admin& admin_;
   Init::Manager* init_manager_{};
 
-
   friend class TdsTapConfigSubscription;
 };
 
-}
-}
-}
-}
+} // namespace Tap
+} // namespace Common
+} // namespace Extensions
+} // namespace Envoy

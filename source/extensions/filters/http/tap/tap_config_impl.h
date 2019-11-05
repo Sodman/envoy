@@ -17,8 +17,7 @@ class HttpTapConfigImpl : public Extensions::Common::Tap::TapConfigBaseImpl,
                           public std::enable_shared_from_this<HttpTapConfigImpl> {
 public:
   HttpTapConfigImpl(envoy::service::tap::v2alpha::TapConfig&& proto_config,
-                    Runtime::Loader& loader_,
-                    Extensions::Common::Tap::Sink* admin_streamer,
+                    Runtime::Loader& loader_, Extensions::Common::Tap::Sink* admin_streamer,
                     Upstream::ClusterManager& cluster_manager, Stats::Scope& scope,
                     const LocalInfo::LocalInfo& local_info);
 
@@ -28,19 +27,23 @@ public:
 
 class HttpPerRequestTapperImpl : public HttpPerRequestTapper, Logger::Loggable<Logger::Id::tap> {
 public:
-  HttpPerRequestTapperImpl(HttpTapConfigSharedPtr config, Extensions::Common::Tap::PerTapSinkHandleManagerPtr&& sink_handle, uint64_t stream_id)
-      : config_(std::move(config)), stream_id_(stream_id),
-        sink_handle_(std::move(sink_handle)),
+  HttpPerRequestTapperImpl(HttpTapConfigSharedPtr config,
+                           Extensions::Common::Tap::PerTapSinkHandleManagerPtr&& sink_handle,
+                           uint64_t stream_id)
+      : config_(std::move(config)), stream_id_(stream_id), sink_handle_(std::move(sink_handle)),
         statuses_(config_->createMatchStatusVector()) {
     config_->rootMatcher().onNewStream(statuses_);
   }
 
   // TapFilter::HttpPerRequestTapper
-  void onConnectionMetadataKnown(const Network::Address::InstanceConstSharedPtr& remote_address, const Upstream::ClusterInfoConstSharedPtr& destination_cluster) override;
+  void onConnectionMetadataKnown(
+      const Network::Address::InstanceConstSharedPtr& remote_address,
+      const Upstream::ClusterInfoConstSharedPtr& destination_cluster) override;
   void onRequestHeaders(const Http::HeaderMap& headers) override;
   void onRequestBody(const Buffer::Instance& data) override;
   void onRequestTrailers(const Http::HeaderMap& headers) override;
-  void onDestinationHostKnown(const Upstream::HostDescriptionConstSharedPtr& destination_host) override;
+  void
+  onDestinationHostKnown(const Upstream::HostDescriptionConstSharedPtr& destination_host) override;
   void onResponseHeaders(const Http::HeaderMap& headers) override;
   void onResponseBody(const Buffer::Instance& data) override;
   void onResponseTrailers(const Http::HeaderMap& headers) override;
@@ -92,7 +95,7 @@ private:
   Extensions::Common::Tap::TraceWrapperPtr buffered_streamed_request_body_;
   Extensions::Common::Tap::TraceWrapperPtr buffered_streamed_response_body_;
   Extensions::Common::Tap::TraceWrapperPtr buffered_full_trace_;
-  
+
   Upstream::ClusterInfoConstSharedPtr destination_cluster_;
   Network::Address::InstanceConstSharedPtr remote_address_;
   Upstream::HostDescriptionConstSharedPtr destination_host_;

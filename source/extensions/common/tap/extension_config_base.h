@@ -1,12 +1,12 @@
 #pragma once
 
 #include "envoy/config/common/tap/v2alpha/common.pb.h"
-#include "envoy/thread_local/thread_local.h"
 #include "envoy/local_info/local_info.h"
+#include "envoy/thread_local/thread_local.h"
 
-#include "extensions/common/tap/tds.h"
 #include "extensions/common/tap/admin.h"
 #include "extensions/common/tap/tap.h"
+#include "extensions/common/tap/tds.h"
 
 namespace Envoy {
 namespace Extensions {
@@ -29,18 +29,14 @@ protected:
                       TapConfigFactoryPtr&& config_factory, Server::Admin& admin,
                       Singleton::Manager& singleton_manager, ThreadLocal::SlotAllocator& tls,
                       Event::Dispatcher& main_thread_dispatcher,
-                      
-                      
-      Init::Manager* init_manager,
-      const std::string& stat_prefix,
-      Stats::Scope& stats,
-      Upstream::ClusterManager& cluster_Manager,
-      const LocalInfo::LocalInfo& local_info,
-      Envoy::Runtime::RandomGenerator& random,
-      Api::Api& api,
-      ProtobufMessage::ValidationVisitor& validation_visitor
-                      
-                      );
+
+                      Init::Manager* init_manager, const std::string& stat_prefix,
+                      Stats::Scope& stats, Upstream::ClusterManager& cluster_Manager,
+                      const LocalInfo::LocalInfo& local_info,
+                      Envoy::Runtime::RandomGenerator& random, Api::Api& api,
+                      ProtobufMessage::ValidationVisitor& validation_visitor
+
+  );
   ~ExtensionConfigBase() override;
 
   // All tap configurations derive from TapConfig for type safety. In order to use a common

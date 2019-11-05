@@ -15,12 +15,13 @@ public:
   TransportSocketFactoryContextImpl(
       Server::Admin& admin, Ssl::ContextManager& context_manager, Stats::Scope& stats_scope,
       Upstream::ClusterManager& cm, const LocalInfo::LocalInfo& local_info,
-      Event::Dispatcher& dispatcher, Envoy::Runtime::RandomGenerator& random, Envoy::Runtime::Loader& runtime, Stats::Store& stats,
-      Singleton::Manager& singleton_manager, ThreadLocal::SlotAllocator& tls,
-      ProtobufMessage::ValidationVisitor& validation_visitor, Api::Api& api)
+      Event::Dispatcher& dispatcher, Envoy::Runtime::RandomGenerator& random,
+      Envoy::Runtime::Loader& runtime, Stats::Store& stats, Singleton::Manager& singleton_manager,
+      ThreadLocal::SlotAllocator& tls, ProtobufMessage::ValidationVisitor& validation_visitor,
+      Api::Api& api)
       : admin_(admin), context_manager_(context_manager), stats_scope_(stats_scope),
-        cluster_manager_(cm), local_info_(local_info), dispatcher_(dispatcher), random_(random), runtime_(runtime),
-        stats_(stats), singleton_manager_(singleton_manager), tls_(tls),
+        cluster_manager_(cm), local_info_(local_info), dispatcher_(dispatcher), random_(random),
+        runtime_(runtime), stats_(stats), singleton_manager_(singleton_manager), tls_(tls),
         validation_visitor_(validation_visitor), api_(api) {}
 
   // TransportSocketFactoryContext

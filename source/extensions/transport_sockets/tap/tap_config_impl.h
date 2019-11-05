@@ -12,7 +12,9 @@ namespace Tap {
 
 class PerSocketTapperImpl : public PerSocketTapper {
 public:
-  PerSocketTapperImpl(SocketTapConfigSharedPtr config, Extensions::Common::Tap::PerTapSinkHandleManagerPtr&& sink_handle, const Network::Connection& connection);
+  PerSocketTapperImpl(SocketTapConfigSharedPtr config,
+                      Extensions::Common::Tap::PerTapSinkHandleManagerPtr&& sink_handle,
+                      const Network::Connection& connection);
 
   // PerSocketTapper
   void closeSocket(Network::ConnectionEvent event) override;
@@ -48,8 +50,9 @@ class SocketTapConfigImpl : public Extensions::Common::Tap::TapConfigBaseImpl,
                             public SocketTapConfig,
                             public std::enable_shared_from_this<SocketTapConfigImpl> {
 public:
-  SocketTapConfigImpl(envoy::service::tap::v2alpha::TapConfig&& proto_config, Runtime::Loader& loader,
-                      Extensions::Common::Tap::Sink* admin_streamer, TimeSource& time_system,
+  SocketTapConfigImpl(envoy::service::tap::v2alpha::TapConfig&& proto_config,
+                      Runtime::Loader& loader, Extensions::Common::Tap::Sink* admin_streamer,
+                      TimeSource& time_system,
 
                       Upstream::ClusterManager& cluster_manager, Stats::Scope& scope,
                       const LocalInfo::LocalInfo& local_info)
@@ -61,7 +64,8 @@ public:
   PerSocketTapperPtr createPerSocketTapper(const Network::Connection& connection) override {
     auto sink_handle = createPerTapSinkHandleManager(connection.id());
     if (sink_handle) {
-      return std::make_unique<PerSocketTapperImpl>(shared_from_this(), std::move(sink_handle), connection);
+      return std::make_unique<PerSocketTapperImpl>(shared_from_this(), std::move(sink_handle),
+                                                   connection);
     }
     return {};
   }

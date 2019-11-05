@@ -6,8 +6,8 @@
 #include "envoy/stats/scope.h"
 #include "envoy/stats/stats_macros.h"
 
-#include "extensions/filters/http/common/factory_base.h"
 #include "extensions/common/tap/extension_config_base.h"
+#include "extensions/filters/http/common/factory_base.h"
 #include "extensions/filters/http/tap/tap_config.h"
 
 #include "absl/strings/string_view.h"
@@ -75,7 +75,8 @@ private:
  */
 class Filter : public Http::StreamFilter, public AccessLog::Instance {
 public:
-  Filter(Upstream::ClusterManager& cluster_manager, FilterConfigSharedPtr config) : cluster_manager_(cluster_manager), config_(std::move(config)) {}
+  Filter(Upstream::ClusterManager& cluster_manager, FilterConfigSharedPtr config)
+      : cluster_manager_(cluster_manager), config_(std::move(config)) {}
 
   static FilterStats generateStats(const std::string& prefix, Stats::Scope& scope);
 

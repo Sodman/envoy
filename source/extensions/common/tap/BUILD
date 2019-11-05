@@ -26,13 +26,13 @@ envoy_cc_library(
     deps = [
         ":tap_interface",
         ":tap_matcher",
-        "//source/common/common:assert_lib",
-        "//source/common/common:stack_array",
+        "//include/envoy/grpc:async_client_interface",
+        "//include/envoy/grpc:async_client_manager_interface",
         "//include/envoy/local_info:local_info_interface",
         "//include/envoy/upstream:cluster_manager_interface",
-        "//include/envoy/grpc:async_client_interface",
+        "//source/common/common:assert_lib",
+        "//source/common/common:stack_array",
         "//source/common/grpc:typed_async_client_lib",
-        "//include/envoy/grpc:async_client_manager_interface",
     ],
 )
 
@@ -77,9 +77,9 @@ envoy_cc_library(
     hdrs = ["tds.h"],
     deps = [
         "//include/envoy/thread_local:thread_local_interface",
-        "//source/extensions/common/tap:admin",
-        "//source/common/init:target_lib",
         "//source/common/config:subscription_factory_lib",
+        "//source/common/init:target_lib",
+        "//source/extensions/common/tap:admin",
         "@envoy_api//envoy/config/common/tap/v2alpha:pkg_cc_proto",
         "@envoy_api//envoy/service/tap/v2alpha:pkg_cc_proto",
     ],

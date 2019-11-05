@@ -119,8 +119,9 @@ ListenerImpl::ListenerImpl(const envoy::api::v2::Listener& config, const std::st
   Server::Configuration::TransportSocketFactoryContextImpl factory_context(
       parent_.server_.admin(), parent_.server_.sslContextManager(), *listener_scope_,
       parent_.server_.clusterManager(), parent_.server_.localInfo(), parent_.server_.dispatcher(),
-      parent_.server_.random(), parent_.server_.runtime(), parent_.server_.stats(), parent_.server_.singletonManager(),
-      parent_.server_.threadLocal(), validation_visitor, parent_.server_.api());
+      parent_.server_.random(), parent_.server_.runtime(), parent_.server_.stats(),
+      parent_.server_.singletonManager(), parent_.server_.threadLocal(), validation_visitor,
+      parent_.server_.api());
   factory_context.setInitManager(initManager());
   ListenerFilterChainFactoryBuilder builder(*this, factory_context);
   filter_chain_manager_.addFilterChain(config.filter_chains(), builder);

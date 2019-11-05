@@ -88,8 +88,8 @@ protected:
         "cluster.{}.",
         eds_cluster_.alt_stat_name().empty() ? eds_cluster_.name() : eds_cluster_.alt_stat_name()));
     Envoy::Server::Configuration::TransportSocketFactoryContextImpl factory_context(
-        admin_, ssl_context_manager_, *scope, cm_, local_info_, dispatcher_, random_, runtime_, stats_,
-        singleton_manager_, tls_, validation_visitor_ *api_);
+        admin_, ssl_context_manager_, *scope, cm_, local_info_, dispatcher_, random_, runtime_,
+        stats_, singleton_manager_, tls_, validation_visitor_ * api_);
     cluster_.reset(
         new EdsClusterImpl(eds_cluster_, runtime_, factory_context, std::move(scope), false));
     EXPECT_EQ(initialize_phase, cluster_->initializePhase());

@@ -6,10 +6,11 @@ option java_outer_classname = "WrapperProto";
 option java_multiple_files = true;
 option java_package = "io.envoyproxy.envoy.data.tap.v2alpha";
 
+import "envoy/api/v2/core/address.proto";
 import "envoy/data/tap/v2alpha/http.proto";
 import "envoy/data/tap/v2alpha/transport.proto";
+
 import "google/protobuf/struct.proto";
-import "envoy/api/v2/core/address.proto";
 
 import "validate/validate.proto";
 
@@ -17,17 +18,22 @@ import "validate/validate.proto";
 
 // Wrapper for all fully buffered and streamed tap traces that Envoy emits. This is required for
 // sending traces over gRPC APIs or more easily persisting binary messages to files.
+// [#next-free-field: 7]
 message TraceWrapper {
   message Destination {
     string cluster_name = 1;
+
     google.protobuf.Struct cluster_metadata = 2;
-    envoy.api.v2.core.Address host_address = 3;
+
+    api.v2.core.Address host_address = 3;
+
     google.protobuf.Struct host_metadata = 4;
   }
+
   // if trace is streaming, this may only be sent once.
   Destination destination = 5;
 
-  envoy.api.v2.core.Address downstream_remote_address = 6;
+  api.v2.core.Address downstream_remote_address = 6;
 
   oneof trace {
     option (validate.required) = true;

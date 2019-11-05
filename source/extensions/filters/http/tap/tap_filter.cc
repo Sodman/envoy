@@ -1,6 +1,6 @@
-#include "envoy/upstream/cluster_manager.h"
-
 #include "extensions/filters/http/tap/tap_filter.h"
+
+#include "envoy/upstream/cluster_manager.h"
 
 namespace Envoy {
 namespace Extensions {
@@ -9,21 +9,14 @@ namespace TapFilter {
 
 FilterConfigImpl::FilterConfigImpl(
     const envoy::config::filter::http::tap::v2alpha::Tap& proto_config,
-    const std::string& stats_prefix,
-    Extensions::Common::Tap::TapConfigFactoryPtr&& config_factory,
-     Server::Configuration::FactoryContext& context)
+    const std::string& stats_prefix, Extensions::Common::Tap::TapConfigFactoryPtr&& config_factory,
+    Server::Configuration::FactoryContext& context)
     : ExtensionConfigBase(proto_config.common_config(), std::move(config_factory), context.admin(),
                           context.singletonManager(), context.threadLocal(), context.dispatcher(),
 
-                          &context.initManager(),
-                          stats_prefix,
-                          context.scope(),
-                          context.clusterManager(),
-                          context.localInfo(),
-                          context.random(),
-                          context.api(),
-                          context.messageValidationVisitor()
-                          ),
+                          &context.initManager(), stats_prefix, context.scope(),
+                          context.clusterManager(), context.localInfo(), context.random(),
+                          context.api(), context.messageValidationVisitor()),
       stats_(Filter::generateStats(stats_prefix, context.scope())) {}
 
 HttpTapConfigSharedPtr FilterConfigImpl::currentConfig() {
@@ -42,18 +35,19 @@ Http::FilterHeadersStatus Filter::decodeHeaders(Http::HeaderMap& headers, bool) 
   if (tapper_ != nullptr) {
     auto&& route = decoder_callbacks_->route();
     if (route != nullptr) {
-        const Router::RouteEntry *route_entry = route->routeEntry();
-        if (route_entry != nullptr){
-          auto&& cluster_name = route_entry->clusterName();
-            if (!cluster_name.empty()) {
-              auto *cluster = cluster_manager_.get(cluster_name);
-              if (cluster != nullptr){
-                destination_cluster = cluster->info();
-              }
-            }
+      const Router::RouteEntry* route_entry = route->routeEntry();
+      if (route_entry != nullptr) {
+        auto&& cluster_name = route_entry->clusterName();
+        if (!cluster_name.empty()) {
+          auto* cluster = cluster_manager_.get(cluster_name);
+          if (cluster != nullptr) {
+            destination_cluster = cluster->info();
+          }
         }
+      }
     }
-    tapper_->onConnectionMetadataKnown(decoder_callbacks_->connection()->remoteAddress(), destination_cluster);
+    tapper_->onConnectionMetadataKnown(decoder_callbacks_->connection()->remoteAddress(),
+                                       destination_cluster);
     tapper_->onRequestHeaders(headers);
   }
   return Http::FilterHeadersStatus::Continue;

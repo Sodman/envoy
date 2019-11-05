@@ -67,8 +67,8 @@ public:
    */
   virtual void onNewStream(MatchStatusVector& statuses) const PURE;
 
-  virtual void onUpstreamCluster(absl::string_view destination, MatchStatusVector& statuses) const PURE;
-
+  virtual void onUpstreamCluster(absl::string_view destination,
+                                 MatchStatusVector& statuses) const PURE;
 
   /**
    * Update match status given HTTP request headers.
@@ -137,9 +137,10 @@ public:
     updateLocalStatus(statuses,
                       [](Matcher& m, MatchStatusVector& statuses) { m.onNewStream(statuses); });
   }
-  
-  void onUpstreamCluster(absl::string_view destination, MatchStatusVector& statuses) const override {
-  updateLocalStatus(statuses, [&destination](Matcher& m, MatchStatusVector& statuses) {
+
+  void onUpstreamCluster(absl::string_view destination,
+                         MatchStatusVector& statuses) const override {
+    updateLocalStatus(statuses, [&destination](Matcher& m, MatchStatusVector& statuses) {
       m.onUpstreamCluster(destination, statuses);
     });
   }
@@ -239,21 +240,24 @@ public:
   }
 };
 
-
 class UpstreamClusterMatcher : public SimpleMatcher {
 public:
   UpstreamClusterMatcher(const envoy::service::tap::v2alpha::ClusterMatch& config,
-const std::vector<MatcherPtr>& matchers) : SimpleMatcher(matchers) {
-  for (const auto& cluster_name : config.names()) {
-    clusters_to_match_.emplace_back(cluster_name);
+                         const std::vector<MatcherPtr>& matchers)
+      : SimpleMatcher(matchers) {
+    for (const auto& cluster_name : config.names()) {
+      clusters_to_match_.emplace_back(cluster_name);
+    }
   }
-}
 
-  void onUpstreamCluster(absl::string_view destination, MatchStatusVector& statuses) const override {
+  void onUpstreamCluster(absl::string_view destination,
+                         MatchStatusVector& statuses) const override {
     ASSERT(statuses[my_index_].might_change_status_);
-    statuses[my_index_].matches_ = std::find(clusters_to_match_.begin(), clusters_to_match_.end(), destination) != clusters_to_match_.end();
+    statuses[my_index_].matches_ = std::find(clusters_to_match_.begin(), clusters_to_match_.end(),
+                                             destination) != clusters_to_match_.end();
     statuses[my_index_].might_change_status_ = false;
   }
+
 private:
   std::vector<std::string> clusters_to_match_;
 };

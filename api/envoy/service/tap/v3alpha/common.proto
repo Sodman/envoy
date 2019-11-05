@@ -41,7 +41,7 @@ message TapConfig {
 
 // Tap match configuration. This is a recursive structure which allows complex nested match
 // configurations to be built using various logical operators.
-// [#next-free-field: 9]
+// [#next-free-field: 10]
 message MatchPredicate {
   // A set of match configurations used for logical operations.
   message MatchSet {
@@ -77,7 +77,15 @@ message MatchPredicate {
 
     // HTTP response trailers match configuration.
     HttpHeadersMatch http_response_trailers_match = 8;
+
+    ClusterMatch destination_cluster_match = 9;
+    // TODDO: maybe even string source_cluster_match = 10;? though this can be done by making the
+    //        control plane smart
   }
+}
+
+message ClusterMatch {
+  repeated string names = 1;
 }
 
 // HTTP headers match configuration.

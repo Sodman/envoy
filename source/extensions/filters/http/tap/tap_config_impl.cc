@@ -1,11 +1,12 @@
-#include "common/network/utility.h"
 #include "extensions/filters/http/tap/tap_config_impl.h"
-#include "extensions/filters/http/well_known_names.h"
 
 #include "envoy/data/tap/v2alpha/http.pb.h"
 
 #include "common/common/assert.h"
+#include "common/network/utility.h"
 #include "common/protobuf/protobuf.h"
+
+#include "extensions/filters/http/well_known_names.h"
 
 namespace Envoy {
 namespace Extensions {
@@ -26,17 +27,17 @@ Http::HeaderMap::Iterate fillHeaderList(const Http::HeaderEntry& header, void* c
 } // namespace
 
 HttpTapConfigImpl::HttpTapConfigImpl(envoy::service::tap::v2alpha::TapConfig&& proto_config,
-                                     Runtime::Loader& loader,
-                                     Common::Tap::Sink* admin_streamer,
+                                     Runtime::Loader& loader, Common::Tap::Sink* admin_streamer,
                                      Upstream::ClusterManager& cluster_manager, Stats::Scope& scope,
                                      const LocalInfo::LocalInfo& local_info)
-    : TapCommon::TapConfigBaseImpl(std::move(proto_config), loader, admin_streamer,
-                                   cluster_manager, scope, local_info) {}
+    : TapCommon::TapConfigBaseImpl(std::move(proto_config), loader, admin_streamer, cluster_manager,
+                                   scope, local_info) {}
 
 HttpPerRequestTapperPtr HttpTapConfigImpl::createPerRequestTapper(uint64_t stream_id) {
   auto sink_handle = createPerTapSinkHandleManager(stream_id);
   if (sink_handle) {
-    return std::make_unique<HttpPerRequestTapperImpl>(shared_from_this(), std::move(sink_handle), stream_id);
+    return std::make_unique<HttpPerRequestTapperImpl>(shared_from_this(), std::move(sink_handle),
+                                                      stream_id);
   }
   return {};
 }
@@ -51,7 +52,9 @@ void HttpPerRequestTapperImpl::streamRequestHeaders() {
   sink_handle_->submitTrace(std::move(trace));
 }
 
-void HttpPerRequestTapperImpl::onConnectionMetadataKnown(const Network::Address::InstanceConstSharedPtr& remote_address, const Upstream::ClusterInfoConstSharedPtr& destination_cluster) {
+void HttpPerRequestTapperImpl::onConnectionMetadataKnown(
+    const Network::Address::InstanceConstSharedPtr& remote_address,
+    const Upstream::ClusterInfoConstSharedPtr& destination_cluster) {
   destination_cluster_ = destination_cluster;
   remote_address_ = remote_address;
   config_->rootMatcher().onUpstreamCluster(destination_cluster->name(), statuses_);
@@ -105,7 +108,8 @@ void HttpPerRequestTapperImpl::onRequestTrailers(const Http::HeaderMap& trailers
   }
 }
 
-void HttpPerRequestTapperImpl::onDestinationHostKnown(const Upstream::HostDescriptionConstSharedPtr& destination_host) {
+void HttpPerRequestTapperImpl::onDestinationHostKnown(
+    const Upstream::HostDescriptionConstSharedPtr& destination_host) {
   destination_host_ = destination_host;
 }
 
@@ -143,7 +147,7 @@ void HttpPerRequestTapperImpl::streamBufferedResponseBody() {
 }
 
 void HttpPerRequestTapperImpl::streamEnd() {
-  // send empty trace to signal the end of the stream. 
+  // send empty trace to signal the end of the stream.
   TapCommon::TraceWrapperPtr trace = makeTraceSegment();
   sink_handle_->submitTrace(std::move(trace));
 }
@@ -249,7 +253,7 @@ void HttpPerRequestTapperImpl::onBody(
 }
 
 void HttpPerRequestTapperImpl::setConnectionMetadata(TapCommon::TraceWrapperPtr& trace) {
-if (destination_cluster_) {
+  if (destination_cluster_) {
     auto* destination = trace->mutable_destination();
     destination->set_cluster_name(destination_cluster_->name());
     auto&& metadata = destination_cluster_->metadata();
@@ -262,20 +266,18 @@ if (destination_cluster_) {
   }
 
   if (remote_address_) {
-    Network::Utility::addressToProtobufAddress(
-            *remote_address_,
-            *trace->mutable_downstream_remote_address());
+    Network::Utility::addressToProtobufAddress(*remote_address_,
+                                               *trace->mutable_downstream_remote_address());
     remote_address_.reset();
   }
 }
 
 void HttpPerRequestTapperImpl::setDestinationHost(TapCommon::TraceWrapperPtr& trace) {
-if (destination_host_) {
+  if (destination_host_) {
     auto* destination = trace->mutable_destination();
 
-    Network::Utility::addressToProtobufAddress(
-            *destination_host_->address(),
-            *destination->mutable_host_address());
+    Network::Utility::addressToProtobufAddress(*destination_host_->address(),
+                                               *destination->mutable_host_address());
 
     auto&& metadata = destination_host_->metadata();
     if (metadata) {
