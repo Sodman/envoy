@@ -177,7 +177,7 @@ public:
               const LocalInfo::LocalInfo& local_info)
       : local_info_(local_info), tap_id_(std::move(tap_id)), 
   service_method_(*Protobuf::DescriptorPool::generated_pool()->FindMethodByName(
-          "envoy.service.tap.v2alpha.TapService.StreamTaps")) {
+          "envoy.service.tap.v2alpha.TapSinkService.StreamTaps")) {
     const auto async_client_factory =
         cluster_manager.grpcAsyncClientManager().factoryForGrpcService(grpc_service, scope, true);
     client_ = async_client_factory->create();
