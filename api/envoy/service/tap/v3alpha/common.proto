@@ -79,7 +79,7 @@ message MatchPredicate {
     HttpHeadersMatch http_response_trailers_match = 8;
 
     ClusterMatch destination_cluster_match = 9;
-    // TODDO: maybe even string source_cluster_match = 10;? though this can be done by making the
+    // TODO: maybe even string source_cluster_match = 10;? though this can be done by making the
     //        control plane smart
   }
 }
