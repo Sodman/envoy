@@ -53,8 +53,8 @@ void EdsClusterImpl::BatchUpdateHelper::batchUpdate(PrioritySet::HostUpdateCb& h
     priority_state_manager.initializePriorityFor(locality_lb_endpoint);
 
     for (const auto& lb_endpoint : locality_lb_endpoint.lb_endpoints()) {
-
-      const ProtobufWkt::Value& value = Config::Metadata::metadataValue(lb_endpoint.metadata(), 
+      const auto& host_metadata = lb_endpoint.metadata();
+      const ProtobufWkt::Value& value = Config::Metadata::metadataValue(&host_metadata, 
           Config::MetadataFilters::get().ENVOY_LB, Config::MetadataEnvoyLbKeys::get().HOSTNAME);
       priority_state_manager.registerHostForPriority(
           value.string_value(), parent_.resolveProtoAddress(lb_endpoint.endpoint().address()), 
