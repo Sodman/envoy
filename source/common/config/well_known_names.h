@@ -43,6 +43,7 @@ class MetadataEnvoyLbKeyValues {
 public:
   // Key in envoy.lb filter namespace for endpoint canary bool value.
   const std::string CANARY = "canary";
+  const std::string HOSTNAME = "hostname";
 };
 
 using MetadataEnvoyLbKeys = ConstSingleton<MetadataEnvoyLbKeyValues>;
