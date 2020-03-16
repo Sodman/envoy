@@ -185,7 +185,7 @@ HttpHealthCheckerImpl::HttpActiveHealthCheckSession::HttpActiveHealthCheckSessio
                                             : parent_.host_value_),
       protocol_(codecClientTypeToProtocol(parent_.codec_client_type_)),
       local_address_(std::make_shared<Network::Address::Ipv4Instance>("127.0.0.1")) {
-        if ((!host->hostname().empty()) && parent_.host_value_->name().empty())  {
+        if ((!host->hostname().empty()) && parent_.host_value_.empty())  {
           // TODO: this is a breaking change, update this to not break existing behavior.
           hostname_ = host->hostname();
         }
