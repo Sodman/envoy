@@ -178,17 +178,25 @@ Http::Protocol codecClientTypeToProtocol(Http::CodecClient::Type codec_client_ty
   }
 }
 
+const string& gethostname(HttpHealthCheckerImpl& parent, const HostSharedPtr& host){
+  if (!parent_.host_value_.empty()) {
+    return parent_.host_value_;
+  } 
+  
+  if (!host->hostname().empty()) {
+    // TODO: this is a breaking change, update this to not break existing behavior.
+    return host->hostname();
+  }
+  
+  return parent_.cluster_.info()->name();
+}
+
 HttpHealthCheckerImpl::HttpActiveHealthCheckSession::HttpActiveHealthCheckSession(
     HttpHealthCheckerImpl& parent, const HostSharedPtr& host)
     : ActiveHealthCheckSession(parent, host), parent_(parent),
-      hostname_(parent_.host_value_.empty() ? parent_.cluster_.info()->name()
-                                            : parent_.host_value_),
+      hostname_(gethostname(parent, host)),
       protocol_(codecClientTypeToProtocol(parent_.codec_client_type_)),
       local_address_(std::make_shared<Network::Address::Ipv4Instance>("127.0.0.1")) {
-        if ((!host->hostname().empty()) && parent_.host_value_.empty())  {
-          // TODO: this is a breaking change, update this to not break existing behavior.
-          hostname_ = host->hostname();
-        }
       }
 
 HttpHealthCheckerImpl::HttpActiveHealthCheckSession::~HttpActiveHealthCheckSession() {
