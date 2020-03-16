@@ -184,7 +184,12 @@ HttpHealthCheckerImpl::HttpActiveHealthCheckSession::HttpActiveHealthCheckSessio
       hostname_(parent_.host_value_.empty() ? parent_.cluster_.info()->name()
                                             : parent_.host_value_),
       protocol_(codecClientTypeToProtocol(parent_.codec_client_type_)),
-      local_address_(std::make_shared<Network::Address::Ipv4Instance>("127.0.0.1")) {}
+      local_address_(std::make_shared<Network::Address::Ipv4Instance>("127.0.0.1")) {
+        if ((!host->hostname().empty()) && parent_.host_value_->name().empty())  {
+          // TODO: this is a breaking change, update this to not break existing behavior.
+          hostname_ = host->hostname();
+        }
+      }
 
 HttpHealthCheckerImpl::HttpActiveHealthCheckSession::~HttpActiveHealthCheckSession() {
   ASSERT(client_ == nullptr);
