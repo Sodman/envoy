@@ -178,7 +178,7 @@ Http::Protocol codecClientTypeToProtocol(Http::CodecClient::Type codec_client_ty
   }
 }
 
-const std::string& gethostname(HttpHealthCheckerImpl& parent, const HostSharedPtr& host){
+const std::string& HttpHealthCheckerImpl::HttpActiveHealthCheckSession::gethostname(HttpHealthCheckerImpl& parent, const HostSharedPtr& host) {
   if (!parent.host_value_.empty()) {
     return parent.host_value_;
   } 

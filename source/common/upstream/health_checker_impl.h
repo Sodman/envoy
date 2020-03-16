@@ -117,6 +117,8 @@ private:
       HttpActiveHealthCheckSession& parent_;
     };
 
+    const std::string& gethostname(HttpHealthCheckerImpl& parent, const HostSharedPtr& host);
+
     ConnectionCallbackImpl connection_callback_impl_{*this};
     HttpHealthCheckerImpl& parent_;
     Http::CodecClientPtr client_;
